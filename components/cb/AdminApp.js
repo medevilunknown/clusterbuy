@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react'
 import { api, inr, inrShort } from '@/lib/cb/api'
 import { Sidebar, TopBar, KpiCard, Panel, DataTable, StatusBadge } from '@/components/cb/shared'
+import { TrendArea, Donut, GroupedBars, TEAL, NAVY, AMBER } from '@/components/cb/charts'
+import { CompanySettings, ProfilePage } from '@/components/cb/settings'
 import { SimpleList, Stub } from '@/components/cb/BuyerApp'
 import {
   LayoutDashboard, Users, Building2, Layers, Gavel, Package, Warehouse, Boxes, ShieldCheck,
@@ -29,6 +31,19 @@ const NAV = [
   { key: 'settings', label: 'Settings', icon: Settings },
 ]
 
+const GMV_TREND = [
+  { month: 'Jan', gmv: 210, orders: 42 }, { month: 'Feb', gmv: 260, orders: 51 }, { month: 'Mar', gmv: 320, orders: 63 },
+  { month: 'Apr', gmv: 300, orders: 58 }, { month: 'May', gmv: 380, orders: 72 }, { month: 'Jun', gmv: 440, orders: 84 },
+]
+const ORDER_STAGE_MIX = [
+  { name: 'In transit', value: 3 }, { name: 'At hub / QC', value: 2 }, { name: 'Allocated', value: 2 },
+  { name: 'Delivered', value: 2 }, { name: 'Completed', value: 1 },
+]
+const CLUSTER_FILL = [
+  { name: 'Peenya', rate: 82 }, { name: 'Bommasandra', rate: 75 }, { name: 'Bhiwandi', rate: 68 },
+  { name: 'Chakan', rate: 71 }, { name: 'Sanand', rate: 59 },
+]
+
 export default function AdminApp({ user, onLogout, roleSwitcher }) {
   const [view, setView] = useState('overview')
   const [sel, setSel] = useState(null)
@@ -37,7 +52,7 @@ export default function AdminApp({ user, onLogout, roleSwitcher }) {
     <div className="flex h-screen bg-[#E6EDF3]/40">
       <Sidebar items={NAV} active={view} onNav={go} dark footer="System Admin · ClusterBuy Ops" />
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar title="Admin control center" subtitle="What requires intervention across the network?" user={user} onLogout={onLogout} roleSwitcher={roleSwitcher} />
+        <TopBar title="Admin control center" subtitle="What requires intervention across the network?" user={user} onLogout={onLogout} roleSwitcher={roleSwitcher} onNavigate={go} />
         <main className="flex-1 overflow-y-auto p-6">
           {view === 'overview' && <Control go={go} />}
           {view === 'buyers' && <Buyers open={(id) => { setSel(id); setView('buyerDetail') }} />}
@@ -52,7 +67,9 @@ export default function AdminApp({ user, onLogout, roleSwitcher }) {
           {view === 'logistics' && <SimpleList collection="/shipments" title="Logistics" cols={[['shipment_no', 'Shipment'], ['direction', 'Type'], ['from', 'From'], ['to', 'To'], ['status', 'Status', true]]} />}
           {view === 'payments' && <SimpleList collection="/settlements" title="Payments & settlements" cols={[['order_no', 'Order'], ['supplier', 'Supplier'], ['net', 'Net'], ['status', 'Status', true]]} />}
           {view === 'disputes' && <SimpleList collection="/disputes" title="Disputes" cols={[['case_no', 'Case'], ['order_no', 'Order'], ['title', 'Issue'], ['payment_state', 'Payment'], ['status', 'Status', true]]} />}
-          {['documents', 'compliance', 'reports', 'audit', 'settings'].includes(view) && <Stub title={NAV.find(n => n.key === view)?.label} />}
+          {['documents', 'compliance', 'reports', 'audit'].includes(view) && <Stub title={NAV.find(n => n.key === view)?.label} />}
+          {view === 'settings' && <CompanySettings role="DEFAULT" companyName="ClusterBuy Operations" cluster="Pan-India network" />}
+          {view === 'profile' && <ProfilePage user={user} roleLabel="System Administrator" />}
         </main>
       </div>
     </div>
@@ -78,6 +95,27 @@ function Control({ go }) {
         <KpiCard label="Disputes" value={d.disputes.length} icon={AlertTriangle} accent="#DC2626" onClick={() => go('disputes')} />
         <KpiCard label="Overdue deliveries" value={2} icon={Truck} accent="#F59E0B" />
         <KpiCard label="Network GMV" value={inrShort(d.setts.reduce((a, s) => a + (s.order_value || 0), 0))} icon={BarChart3} accent="#007F78" />
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        <Panel className="lg:col-span-2" title="Network GMV & orders" subtitle="Monthly gross merchandise value and order volume">
+          <TrendArea data={GMV_TREND} xKey="month" series={[{ key: 'gmv', name: 'GMV (₹ L)', color: TEAL }, { key: 'orders', name: 'Orders', color: NAVY }]} height={240} />
+        </Panel>
+        <Panel title="Orders by stage">
+          <Donut data={ORDER_STAGE_MIX} height={240} centerLabel="live orders" centerValue={d.orders.length} />
+        </Panel>
+      </div>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Panel title="Pool fill rate by cluster" subtitle="Demand aggregation health across clusters">
+          <GroupedBars data={CLUSTER_FILL} xKey="name" series={[{ key: 'rate', name: 'Avg fill %', color: TEAL }]} height={220} />
+        </Panel>
+        <Panel title="Network health">
+          <div className="grid grid-cols-2 gap-3 text-center">
+            {[['On-time delivery', '91%', '#007F78'], ['QC pass rate', '93%', '#142D4E'], ['Avg pool savings', '18%', '#F59E0B'], ['Dispute rate', '2.4%', '#DC2626']].map(([l, v, c]) => (
+              <div key={l} className="rounded-xl border border-slate-100 bg-slate-50 p-4"><div className="text-[24px] font-bold" style={{ color: c }}>{v}</div><div className="mt-1 text-[12px] text-slate-500">{l}</div></div>
+            ))}
+          </div>
+        </Panel>
       </div>
 
       <Panel title="Action queue" subtitle="Items that need intervention across the network" noPad>

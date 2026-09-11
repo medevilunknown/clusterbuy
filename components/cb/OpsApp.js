@@ -1,14 +1,18 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { api, inr } from '@/lib/cb/api'
 import { Sidebar, TopBar, KpiCard, Panel, DataTable, StatusBadge, Fill } from '@/components/cb/shared'
+import { CompanySettings, ProfilePage } from '@/components/cb/settings'
 import { SimpleList, Stub } from '@/components/cb/BuyerApp'
 import {
   LayoutDashboard, Truck, ClipboardCheck, Warehouse, Boxes, ShieldCheck, Split, Layers,
   TruckIcon, MapPin, Undo2, AlertTriangle, Files, BarChart3, ArrowLeft, ArrowRight, CheckCircle2, XCircle, PackageCheck,
 } from 'lucide-react'
 import { toast } from 'sonner'
+
+const LiveMap = dynamic(() => import('@/components/cb/LiveMap'), { ssr: false, loading: () => <div className="grid h-full min-h-[220px] place-items-center rounded-xl bg-slate-50 text-[12px] text-slate-400">Loading map…</div> })
 
 const NAV = [
   { key: 'overview', label: 'Operations Overview', icon: LayoutDashboard },
@@ -36,7 +40,7 @@ export default function OpsApp({ user, onLogout, roleSwitcher }) {
     <div className="flex h-screen bg-[#E6EDF3]/40">
       <Sidebar items={NAV} active={view} onNav={go} dark footer="Peenya Hub · Operator" />
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar title="Operations overview" subtitle="What is arriving, where does it go, has it passed QC, where is it delivered?" user={user} onLogout={onLogout} roleSwitcher={roleSwitcher}
+        <TopBar title="Operations overview" subtitle="What is arriving, where does it go, has it passed QC, where is it delivered?" user={user} onLogout={onLogout} roleSwitcher={roleSwitcher} onNavigate={go}
           right={<select value={wh} onChange={e => setWh(e.target.value)} className="rounded-lg border border-slate-200 px-3 py-2 text-[13px] font-medium text-slate-700 outline-none"><option value="WH01">Peenya — WH01</option><option value="WH02">Bommasandra — WH02</option><option value="WH03">Bhiwandi — WH03</option></select>} />
         <main className="flex-1 overflow-y-auto p-6">
           {view === 'overview' && <Overview wh={wh} go={go} openInbound={(id) => { setSel(id); setView('inboundDetail') }} />}
@@ -53,6 +57,8 @@ export default function OpsApp({ user, onLogout, roleSwitcher }) {
           {view === 'tracking' && <Tracking />}
           {(view === 'returns' || view === 'documents' || view === 'reports') && <Stub title={NAV.find(n => n.key === view)?.label} />}
           {view === 'disputes' && <SimpleList collection="/disputes" title="Disputes" cols={[['case_no', 'Case'], ['order_no', 'Order'], ['title', 'Issue'], ['status', 'Status', true]]} />}
+          {view === 'profile' && <ProfilePage user={user} roleLabel="Warehouse Operator" />}
+          {view === 'settings' && <CompanySettings role="DEFAULT" companyName="Peenya Hub · Operations" cluster="Peenya, Bengaluru" />}
         </main>
       </div>
     </div>
@@ -393,27 +399,45 @@ function Outbound() {
 
 function Tracking() {
   const [rows, setRows] = useState([])
-  useEffect(() => { api('/shipments?direction=outbound').then(setRows).catch(() => {}) }, [])
+  const [selId, setSelId] = useState(null)
+  useEffect(() => { api('/shipments?direction=outbound').then((r) => { setRows(r); setSelId((r.find((x) => x.status === 'Dispatched') || r[0])?.id) }).catch(() => {}) }, [])
   const steps = ['Warehouse', 'Vehicle dispatched', 'Checkpoint', 'Buyer location', 'POD confirmed']
+  const sel = rows.find((r) => r.id === selId)
+  const progOf = (s) => s?.status === 'Delivered' ? 1 : s?.status === 'Dispatched' ? 0.55 : 0.12
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      {rows.slice(0, 4).map(s => {
-        const prog = s.status === 'Delivered' ? 5 : s.status === 'Dispatched' ? 2 : 1
-        return (
-          <Panel key={s.id} title={`${s.shipment_no} → ${s.to}`}>
-            <div className="mb-3 flex items-center gap-2"><MapPin className="h-4 w-4 text-[#007F78]" /><span className="text-[13px] text-slate-500">ETA {s.eta} · {s.vehicle} · {s.driver}</span></div>
-            <div className="flex items-center">
-              {steps.map((st, i) => (
-                <div key={i} className="flex flex-1 items-center last:flex-none">
-                  <div className="flex flex-col items-center"><span className={`h-3 w-3 rounded-full ${i < prog ? 'bg-[#007F78]' : 'bg-slate-200'}`} /><span className="mt-1 w-16 text-center text-[10px] text-slate-400">{st}</span></div>
-                  {i < steps.length - 1 && <div className={`h-0.5 flex-1 ${i < prog - 1 ? 'bg-[#007F78]' : 'bg-slate-200'}`} />}
-                </div>
-              ))}
+    <div className="grid gap-4 lg:grid-cols-3">
+      <div className="space-y-3 lg:col-span-1">
+        <div className="text-[13px] font-semibold text-slate-500">Active deliveries</div>
+        {rows.slice(0, 6).map((s) => {
+          const prog = s.status === 'Delivered' ? 5 : s.status === 'Dispatched' ? 2 : 1
+          return (
+            <button key={s.id} onClick={() => setSelId(s.id)} className={`w-full rounded-xl border p-3.5 text-left transition ${selId === s.id ? 'border-[#007F78] ring-2 ring-[#007F78]/15' : 'border-slate-200 hover:border-slate-300'}`}>
+              <div className="flex items-center justify-between"><span className="text-[13px] font-semibold text-[#142D4E]">{s.shipment_no}</span><StatusBadge status={s.status} /></div>
+              <div className="mt-0.5 text-[12px] text-slate-400">{s.from} → {s.to}</div>
+              <div className="mt-2.5 flex items-center">
+                {steps.map((st, i) => (
+                  <div key={i} className="flex flex-1 items-center last:flex-none">
+                    <span className={`h-2.5 w-2.5 rounded-full ${i < prog ? 'bg-[#007F78]' : 'bg-slate-200'}`} />
+                    {i < steps.length - 1 && <span className={`h-0.5 flex-1 ${i < prog - 1 ? 'bg-[#007F78]' : 'bg-slate-200'}`} />}
+                  </div>
+                ))}
+              </div>
+            </button>
+          )
+        })}
+      </div>
+      <Panel className="lg:col-span-2" title={sel ? `Live tracking — ${sel.shipment_no}` : 'Delivery tracking'} subtitle={sel ? `${sel.from} → ${sel.to} · ETA ${sel.eta} · ${sel.vehicle}` : 'Select a shipment'}>
+        {sel ? (
+          <>
+            <LiveMap fromKey={sel.from} toKey={sel.buyer_cluster || sel.to} progress={progOf(sel)} live={sel.status === 'Dispatched'} height={340} />
+            <div className="mt-3 grid grid-cols-3 gap-3 text-center text-[12px]">
+              <div className="rounded-lg bg-slate-50 p-2.5"><div className="text-slate-400">Driver</div><div className="font-semibold text-[#142D4E]">{sel.driver}</div></div>
+              <div className="rounded-lg bg-slate-50 p-2.5"><div className="text-slate-400">Vehicle</div><div className="font-semibold text-[#142D4E]">{sel.vehicle}</div></div>
+              <div className="rounded-lg bg-slate-50 p-2.5"><div className="text-slate-400">ETA</div><div className="font-semibold text-[#142D4E]">{sel.eta}</div></div>
             </div>
-            <div className="mt-4 grid h-32 place-items-center rounded-lg bg-slate-50 text-[12px] text-slate-400">Map integration-ready placeholder</div>
-          </Panel>
-        )
-      })}
+          </>
+        ) : <div className="grid h-64 place-items-center text-[13px] text-slate-400">No active shipments</div>}
+      </Panel>
     </div>
   )
 }

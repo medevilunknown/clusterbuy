@@ -1,9 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { cn } from '@/lib/utils'
 import { statusCls, inr } from '@/lib/cb/api'
-import { Bell, Search, LogOut, ChevronDown, Check, Boxes } from 'lucide-react'
+import { Bell, Search, LogOut, ChevronDown, Check, Boxes, User, Settings as SettingsIcon, Clock } from 'lucide-react'
 
 // ---- Brand logo ----
 export function Logo({ dark = false, sub = 'Stronger together. Better materials.' }) {
@@ -181,7 +181,7 @@ export function Sidebar({ items, active, onNav, dark = true, footer }) {
   )
 }
 
-export function TopBar({ title, subtitle, user, onLogout, right, roleSwitcher, onSearch }) {
+export function TopBar({ title, subtitle, user, onLogout, right, roleSwitcher, onSearch, onNavigate }) {
   const [open, setOpen] = useState(false)
   return (
     <header className="flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-6 py-3">
@@ -213,6 +213,12 @@ export function TopBar({ title, subtitle, user, onLogout, right, roleSwitcher, o
                 <div className="text-[13px] font-semibold text-slate-700">{user?.name}</div>
                 <div className="truncate text-[11px] text-slate-400">{user?.email}</div>
               </div>
+              {onNavigate && (
+                <div className="border-b border-slate-100 py-1">
+                  <button onClick={() => { setOpen(false); onNavigate('profile') }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[13px] text-slate-600 hover:bg-slate-50"><User className="h-4 w-4" /> My profile</button>
+                  <button onClick={() => { setOpen(false); onNavigate('settings') }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[13px] text-slate-600 hover:bg-slate-50"><SettingsIcon className="h-4 w-4" /> Settings</button>
+                </div>
+              )}
               {roleSwitcher}
               <button onClick={onLogout} className="mt-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[13px] text-red-600 hover:bg-red-50">
                 <LogOut className="h-4 w-4" /> Sign out
@@ -222,5 +228,111 @@ export function TopBar({ title, subtitle, user, onLogout, right, roleSwitcher, o
         </div>
       </div>
     </header>
+  )
+}
+
+
+// ---------------------------------------------------------------------------
+// Stable form primitives (defined at module scope so they never remount and
+// never lose focus while typing).
+// ---------------------------------------------------------------------------
+export function TextField({ label, value, onChange, type = 'text', hint, required, className, ...rest }) {
+  return (
+    <label className={cn('block', className)}>
+      {label && <span className="mb-1 flex items-center gap-1 text-[12.5px] font-medium text-slate-600">{label}{required && <span className="text-[#F59E0B]">*</span>}</span>}
+      <input
+        type={type}
+        value={value ?? ''}
+        onChange={(e) => onChange(type === 'number' ? (e.target.value === '' ? '' : Number(e.target.value)) : e.target.value)}
+        className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-[13px] text-slate-800 outline-none transition focus:border-[#007F78] focus:ring-2 focus:ring-[#007F78]/15"
+        {...rest}
+      />
+      {hint && <span className="mt-1 block text-[11px] text-slate-400">{hint}</span>}
+    </label>
+  )
+}
+
+export function SelectField({ label, value, onChange, options = [], required, className }) {
+  return (
+    <label className={cn('block', className)}>
+      {label && <span className="mb-1 flex items-center gap-1 text-[12.5px] font-medium text-slate-600">{label}{required && <span className="text-[#F59E0B]">*</span>}</span>}
+      <div className="relative">
+        <select value={value ?? ''} onChange={(e) => onChange(e.target.value)}
+          className="w-full appearance-none rounded-lg border border-slate-200 bg-white px-3 py-2.5 pr-9 text-[13px] text-slate-800 outline-none transition focus:border-[#007F78] focus:ring-2 focus:ring-[#007F78]/15">
+          {options.map((o) => { const val = typeof o === 'string' ? o : o.value; const lab = typeof o === 'string' ? o : o.label; return <option key={val} value={val}>{lab}</option> })}
+        </select>
+        <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+      </div>
+    </label>
+  )
+}
+
+export function TextAreaField({ label, value, onChange, maxLength, rows = 3, required, hint, className, ...rest }) {
+  return (
+    <label className={cn('block', className)}>
+      {label && <span className="mb-1 flex items-center gap-1 text-[12.5px] font-medium text-slate-600">{label}{required && <span className="text-[#F59E0B]">*</span>}</span>}
+      <div className="relative">
+        <textarea value={value ?? ''} onChange={(e) => onChange(e.target.value)} rows={rows} maxLength={maxLength}
+          className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2.5 text-[13px] text-slate-800 outline-none transition focus:border-[#007F78] focus:ring-2 focus:ring-[#007F78]/15" {...rest} />
+        {maxLength && <span className="pointer-events-none absolute bottom-2 right-3 text-[11px] text-slate-300">{(value || '').length}/{maxLength}</span>}
+      </div>
+      {hint && <span className="mt-1 block text-[11px] text-slate-400">{hint}</span>}
+    </label>
+  )
+}
+
+export function Chip({ children, active, onClick }) {
+  return (
+    <button type="button" onClick={onClick}
+      className={cn('rounded-lg border px-3 py-1.5 text-[12.5px] font-medium transition',
+        active ? 'border-[#007F78] bg-[#007F78]/8 text-[#007F78]' : 'border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50')}>
+      {children}
+    </button>
+  )
+}
+
+export function Toggle({ checked, onChange }) {
+  return (
+    <button type="button" onClick={() => onChange(!checked)}
+      className={cn('relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition', checked ? 'bg-[#007F78]' : 'bg-slate-300')}>
+      <span className={cn('inline-block h-4 w-4 transform rounded-full bg-white transition', checked ? 'translate-x-4' : 'translate-x-0.5')} />
+    </button>
+  )
+}
+
+// ---- Live countdown timer (MM:SS or HH:MM:SS from a total second count) ----
+export function Countdown({ endsAt, onExpire, className, compact }) {
+  const [left, setLeft] = useState(() => Math.max(0, Math.floor((endsAt - Date.now()) / 1000)))
+  const firedRef = useRef(false)
+  useEffect(() => {
+    const t = setInterval(() => {
+      const s = Math.max(0, Math.floor((endsAt - Date.now()) / 1000))
+      setLeft(s)
+      if (s <= 0 && !firedRef.current) { firedRef.current = true; onExpire && onExpire(); clearInterval(t) }
+    }, 1000)
+    return () => clearInterval(t)
+  }, [endsAt, onExpire])
+  const h = Math.floor(left / 3600), m = Math.floor((left % 3600) / 60), s = left % 60
+  const pad = (n) => String(n).padStart(2, '0')
+  const label = h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`
+  const urgent = left <= 60
+  if (compact) return <span className={cn('font-mono font-bold tabular-nums', urgent ? 'text-red-500' : '', className)}>{left <= 0 ? 'Closed' : label}</span>
+  return (
+    <span className={cn('inline-flex items-center gap-1.5 font-mono tabular-nums', urgent && left > 0 && 'animate-pulse text-red-400', className)}>
+      <Clock className="h-4 w-4" />{left <= 0 ? 'Closed' : label}
+    </span>
+  )
+}
+
+// ---- Section heading ----
+export function SectionTitle({ icon: Icon, title, subtitle }) {
+  return (
+    <div className="mb-4 flex items-start gap-3">
+      {Icon && <span className="mt-0.5 grid h-10 w-10 flex-shrink-0 place-items-center rounded-xl bg-[#007F78]/10 text-[#007F78]"><Icon className="h-5 w-5" /></span>}
+      <div>
+        <div className="text-[17px] font-bold text-[#142D4E]">{title}</div>
+        {subtitle && <div className="text-[13px] text-slate-400">{subtitle}</div>}
+      </div>
+    </div>
   )
 }

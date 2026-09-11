@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-ClusterBuy Backend API Test Suite
-Tests all backend endpoints with focus on the connected order state machine
+ClusterBuy Backend API Test Suite - Regression Test for MongoDB Connection Race Fix
+Tests all backend endpoints with focus on concurrency and the connected order state machine
 """
 
 import requests
@@ -10,6 +10,8 @@ import sys
 from datetime import datetime, timedelta
 from pymongo import MongoClient
 import os
+import concurrent.futures
+import time
 
 # Configuration
 BASE_URL = "https://msme-supply.preview.emergentagent.com/api"
@@ -104,9 +106,124 @@ except Exception as e:
     log_fail("POST /api/seed", str(e))
 
 # ============================================================================
-# PRIORITY 2: List GET endpoints
+# PRIORITY 2: CONCURRENCY CHECK (MOST IMPORTANT - MongoDB race fix)
 # ============================================================================
-print("\n[2] Testing List GET endpoints")
+print("\n[2] CONCURRENCY CHECK - Testing MongoDB connection race fix")
+print("=" * 80)
+print("Firing 20 parallel GET requests to multiple endpoints...")
+print("Checking for: (1) ZERO 500 errors, (2) NO 'Cannot read properties of undefined' errors")
+print("-" * 80)
+
+# Endpoints to test concurrently
+concurrent_endpoints = [
+    "/pools", "/demands", "/orders", "/inventory", "/shipments", 
+    "/settlements", "/auctions", "/inspections", "/buyers", "/sellers",
+    "/companies", "/warehouses", "/materials", "/notifications", 
+    "/action-queue", "/opportunities", "/disputes"
+]
+
+def fetch_endpoint(endpoint):
+    """Fetch a single endpoint and return result"""
+    try:
+        start = time.time()
+        response = requests.get(f"{BASE_URL}{endpoint}", timeout=10)
+        elapsed = time.time() - start
+        
+        result = {
+            "endpoint": endpoint,
+            "status": response.status_code,
+            "elapsed": elapsed,
+            "error": None
+        }
+        
+        # Check for 500 errors
+        if response.status_code == 500:
+            result["error"] = f"500 Internal Server Error: {response.text[:200]}"
+        
+        # Check for the specific race condition error
+        if response.status_code == 500 or "Cannot read properties of undefined" in response.text:
+            result["error"] = f"Race condition error detected: {response.text[:200]}"
+        
+        # Check response is valid JSON array
+        if response.status_code == 200:
+            try:
+                data = response.json()
+                if not isinstance(data, list):
+                    result["error"] = f"Expected array, got {type(data)}"
+            except:
+                result["error"] = "Invalid JSON response"
+        
+        return result
+    except Exception as e:
+        return {
+            "endpoint": endpoint,
+            "status": 0,
+            "elapsed": 0,
+            "error": str(e)
+        }
+
+# Run concurrent requests (20 parallel requests)
+concurrent_results = []
+with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+    # Submit all requests at once
+    futures = []
+    for _ in range(2):  # Do 2 rounds to get ~20 requests
+        for endpoint in concurrent_endpoints[:10]:  # Use first 10 endpoints
+            futures.append(executor.submit(fetch_endpoint, endpoint))
+    
+    # Collect results
+    for future in concurrent.futures.as_completed(futures):
+        concurrent_results.append(future.result())
+
+# Analyze results
+print(f"\nCompleted {len(concurrent_results)} concurrent requests")
+print("-" * 80)
+
+errors_500 = []
+race_errors = []
+other_errors = []
+success_count = 0
+
+for result in concurrent_results:
+    if result["status"] == 200:
+        success_count += 1
+        print(f"✓ {result['endpoint']}: {result['status']} ({result['elapsed']:.3f}s)")
+    else:
+        print(f"✗ {result['endpoint']}: {result['status']} - {result['error']}")
+        
+        if result["status"] == 500:
+            errors_500.append(result)
+        if result["error"] and "Cannot read properties of undefined" in result["error"]:
+            race_errors.append(result)
+        elif result["error"]:
+            other_errors.append(result)
+
+print("\n" + "=" * 80)
+print("CONCURRENCY TEST RESULTS")
+print("=" * 80)
+print(f"Total requests: {len(concurrent_results)}")
+print(f"Successful (200): {success_count}")
+print(f"500 errors: {len(errors_500)}")
+print(f"Race condition errors: {len(race_errors)}")
+print(f"Other errors: {len(other_errors)}")
+
+if len(errors_500) == 0 and len(race_errors) == 0:
+    log_pass("CONCURRENCY CHECK - ZERO 500 errors and NO race condition errors")
+    print("✅ MongoDB connection race fix is working correctly!")
+else:
+    if len(errors_500) > 0:
+        log_fail("CONCURRENCY CHECK - 500 errors", f"Found {len(errors_500)} 500 errors")
+        for err in errors_500[:3]:  # Show first 3
+            print(f"   {err['endpoint']}: {err['error']}")
+    if len(race_errors) > 0:
+        log_fail("CONCURRENCY CHECK - race condition", f"Found {len(race_errors)} race condition errors")
+        for err in race_errors[:3]:  # Show first 3
+            print(f"   {err['endpoint']}: {err['error']}")
+
+# ============================================================================
+# PRIORITY 3: List GET endpoints (sequential for detailed checks)
+# ============================================================================
+print("\n[3] Testing List GET endpoints (sequential for detailed validation)")
 print("-" * 80)
 
 list_endpoints = [
@@ -216,9 +333,9 @@ except Exception as e:
     log_fail("GET /notifications?role=BUYER", str(e))
 
 # ============================================================================
-# PRIORITY 3: Detail GET endpoints
+# PRIORITY 4: Detail GET endpoints
 # ============================================================================
-print("\n[3] Testing Detail GET endpoints")
+print("\n[4] Testing Detail GET endpoints")
 print("-" * 80)
 
 # GET /pools/:id
@@ -310,19 +427,25 @@ if "warehouse_code" in stored_ids:
         log_fail("GET /warehouses/:code", str(e))
 
 # ============================================================================
-# PRIORITY 4: POST /api/demands
+# PRIORITY 5: POST /api/demands (with new fields from redesigned form)
 # ============================================================================
-print("\n[4] Testing POST /api/demands")
+print("\n[5] Testing POST /api/demands (with new fields)")
 print("-" * 80)
 
 try:
     demand_payload = {
         "material": "PP Grade X",
+        "category": "Polymers",
         "grade": "A",
+        "brand": "Reliance",
+        "application": "Injection molding for automotive components",
         "quantity": 5,
         "unit": "tonnes",
         "required_date": "2025-07-15",
-        "cluster": "Peenya, Bengaluru"
+        "cluster": "Peenya, Bengaluru",
+        "delivery_pref": "Hub pickup",
+        "target_price": 85,
+        "spec": "MFI: 10-12 g/10min, Density: 0.905 g/cm³, Tensile strength: 32 MPa"  # spec as STRING
     }
     
     response = requests.post(f"{BASE_URL}/demands", json=demand_payload, timeout=10)
@@ -335,7 +458,7 @@ try:
         # Check demand_no format
         demand_no = data.get("demand_no", "")
         if demand_no.startswith("DEM-") and len(demand_no) > 4:
-            log_pass("POST /api/demands - demand_no format correct")
+            log_pass("POST /api/demands - demand_no format correct (DEM-####)")
         else:
             log_fail("POST /api/demands - demand_no", f"Invalid format: {demand_no}")
         
@@ -344,6 +467,12 @@ try:
             log_pass("POST /api/demands - status is Matching")
         else:
             log_fail("POST /api/demands - status", f"Expected 'Matching', got '{data.get('status')}'")
+        
+        # Check UUID id exists
+        if data.get("id") and len(data.get("id")) > 10:
+            log_pass("POST /api/demands - UUID id present")
+        else:
+            log_fail("POST /api/demands - id", "UUID id missing or invalid")
         
         # Check no _id
         if check_no_mongo_id(data, "POST /api/demands"):
@@ -356,9 +485,9 @@ except Exception as e:
     log_fail("POST /api/demands", str(e))
 
 # ============================================================================
-# PRIORITY 5: POST /api/auctions/:id/bid
+# PRIORITY 6: POST /api/auctions/:id/bid
 # ============================================================================
-print("\n[5] Testing POST /api/auctions/:id/bid")
+print("\n[6] Testing POST /api/auctions/:id/bid")
 print("-" * 80)
 
 if "auctions" in stored_ids:
@@ -409,9 +538,9 @@ else:
     log_warning("POST /api/auctions/:id/bid", "No auction ID available")
 
 # ============================================================================
-# PRIORITY 6: CRITICAL - Connected order state machine
+# PRIORITY 7: CRITICAL - Connected order state machine
 # ============================================================================
-print("\n[6] Testing CRITICAL Connected Order State Machine")
+print("\n[7] Testing CRITICAL Connected Order State Machine")
 print("=" * 80)
 
 # Re-seed to reset state
@@ -453,7 +582,7 @@ try:
             # ================================================================
             # Step A: POST /api/inbound/{inbound_shipment_id}/receive
             # ================================================================
-            print("\n[6a] POST /api/inbound/{id}/receive")
+            print("\n[7a] POST /api/inbound/{id}/receive")
             print("-" * 80)
             
             try:
@@ -501,7 +630,7 @@ try:
             # ================================================================
             # Step B: POST /api/quality/{lot_id}/decision {"decision":"PASS"}
             # ================================================================
-            print("\n[6b] POST /api/quality/{lot_id}/decision (PASS)")
+            print("\n[7b] POST /api/quality/{lot_id}/decision (PASS)")
             print("-" * 80)
             
             try:
@@ -539,7 +668,7 @@ try:
             # ================================================================
             # Step C: POST /api/orders/{id}/advance {"target":"ALLOCATED"}
             # ================================================================
-            print("\n[6c] POST /api/orders/{id}/advance (ALLOCATED)")
+            print("\n[7c] POST /api/orders/{id}/advance (ALLOCATED)")
             print("-" * 80)
             
             try:
@@ -570,7 +699,7 @@ try:
             # ================================================================
             # Step D: POST /api/orders/{id}/advance {"target":"OUTBOUND_DISPATCHED"}
             # ================================================================
-            print("\n[6d] POST /api/orders/{id}/advance (OUTBOUND_DISPATCHED)")
+            print("\n[7d] POST /api/orders/{id}/advance (OUTBOUND_DISPATCHED)")
             print("-" * 80)
             
             try:
@@ -601,7 +730,7 @@ try:
             # ================================================================
             # Step E: POST /api/orders/{id}/advance {"target":"DELIVERED"}
             # ================================================================
-            print("\n[6e] POST /api/orders/{id}/advance (DELIVERED)")
+            print("\n[7e] POST /api/orders/{id}/advance (DELIVERED)")
             print("-" * 80)
             
             try:
@@ -637,7 +766,7 @@ try:
             # ================================================================
             # Step F: POST /api/orders/{id}/advance {"target":"ACCEPTED"}
             # ================================================================
-            print("\n[6f] POST /api/orders/{id}/advance (ACCEPTED)")
+            print("\n[7f] POST /api/orders/{id}/advance (ACCEPTED)")
             print("-" * 80)
             
             try:
@@ -668,7 +797,7 @@ try:
             # ================================================================
             # FAIL PATH: Test QC FAIL on a different order
             # ================================================================
-            print("\n[6g] Testing QC FAIL path (creates dispute)")
+            print("\n[7g] Testing QC FAIL path (creates dispute)")
             print("-" * 80)
             
             # Find another order for FAIL test
@@ -736,13 +865,13 @@ except Exception as e:
     log_fail("State machine test", str(e))
 
 # ============================================================================
-# PRIORITY 7: AUTH endpoints
+# PRIORITY 8: AUTH endpoints
 # ============================================================================
-print("\n[7] Testing AUTH endpoints")
+print("\n[8] Testing AUTH endpoints")
 print("=" * 80)
 
 # GET /api/auth/me with no cookie (should return 401)
-print("\n[7a] GET /api/auth/me (no cookie)")
+print("\n[8a] GET /api/auth/me (no cookie)")
 print("-" * 80)
 try:
     response = requests.get(f"{BASE_URL}/auth/me", timeout=10)
@@ -758,7 +887,7 @@ except Exception as e:
     log_fail("GET /api/auth/me (no cookie)", str(e))
 
 # POST /api/auth/session with no session_id (should return 400)
-print("\n[7b] POST /api/auth/session (no session_id)")
+print("\n[8b] POST /api/auth/session (no session_id)")
 print("-" * 80)
 try:
     response = requests.post(f"{BASE_URL}/auth/session", json={}, timeout=10)
@@ -770,7 +899,7 @@ except Exception as e:
     log_fail("POST /api/auth/session (no session_id)", str(e))
 
 # POST /api/auth/session with bogus session_id (should return 401)
-print("\n[7c] POST /api/auth/session (bogus session_id)")
+print("\n[8c] POST /api/auth/session (bogus session_id)")
 print("-" * 80)
 try:
     response = requests.post(f"{BASE_URL}/auth/session", headers={"X-Session-ID": "bogus-invalid-session"}, timeout=10)
@@ -782,7 +911,7 @@ except Exception as e:
     log_fail("POST /api/auth/session (bogus session_id)", str(e))
 
 # Optional: Create a test session directly in MongoDB and verify /auth/me
-print("\n[7d] Optional: Testing with valid session (direct MongoDB insert)")
+print("\n[8d] Optional: Testing with valid session (direct MongoDB insert)")
 print("-" * 80)
 try:
     client = MongoClient(MONGO_URL)

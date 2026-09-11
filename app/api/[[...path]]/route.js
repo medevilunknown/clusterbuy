@@ -7,13 +7,16 @@ import { NextResponse } from 'next/server'
 // ---------------------------------------------------------------------------
 let client
 let db
+let connectingPromise
 
 async function connectToMongo() {
-  if (!client) {
+  if (db) return db
+  if (!connectingPromise) {
     client = new MongoClient(process.env.MONGO_URL)
-    await client.connect()
-    db = client.db(process.env.DB_NAME)
+    connectingPromise = client.connect()
   }
+  await connectingPromise
+  db = client.db(process.env.DB_NAME)
   return db
 }
 

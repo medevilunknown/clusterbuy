@@ -190,7 +190,77 @@ backend:
         -agent: "testing"
         -comment: "✅ CRITICAL STATE MACHINE FULLY WORKING! Tested complete order lifecycle on CB-1042: (1) POST /api/inbound/{id}/receive → order state=QC_PENDING, lot status='QC pending', inspection status='Pending' ✓ (2) POST /api/quality/{lot_id}/decision PASS → order state=QC_PASSED, lot status='Available' ✓ (3) Advance ALLOCATED → lot status='Allocated' ✓ (4) Advance OUTBOUND_DISPATCHED → outbound shipment status='Dispatched' ✓ (5) Advance DELIVERED → outbound status='Delivered', pod=true ✓ (6) Advance ACCEPTED → settlement status='Approved' ✓. ALSO tested FAIL path: QC decision FAIL → order state=QC_FAILED, lot status='Quality hold', new dispute created ✓. All side effects propagate correctly to linked entities (lots, shipments, inspections, settlements, disputes). State machine is rock solid."
 
+  - task: "MongoDB connection race fix (concurrent requests)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Fixed a race in connectToMongo(): previously the second concurrent request could see a truthy `client` and return `db` before it was assigned (TypeError: Cannot read properties of undefined (reading 'collection')). Now uses a shared connectingPromise and only returns db after connect resolves. Please re-verify core endpoints still work under load: POST /api/seed, several parallel GET list calls (/pools /demands /orders /inventory /shipments /settlements /auctions), POST /api/demands, POST /api/auctions/:id/bid, and the state-machine chain (advance/receive/quality). Expect NO 500s."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ REGRESSION TEST COMPLETE - ALL 54 TESTS PASSED! MongoDB connection race fix verified working perfectly. (1) POST /api/seed: returns correct stats {buyers:10, sellers:6, warehouses:3, orders:10}, idempotent ✓ (2) CONCURRENCY CHECK (CRITICAL): Fired 20 parallel GET requests to /pools /demands /orders /inventory /shipments /settlements /auctions /inspections /buyers /sellers - ZERO 500 errors, NO 'Cannot read properties of undefined (reading collection)' errors, all responses valid JSON arrays ✓ (3) POST /api/demands with new fields (category, material, grade, brand, application, quantity, unit, required_date, cluster, delivery_pref, target_price, spec as STRING): creates demand with DEM-#### format, status='Matching', UUID id, no _id ✓ (4) POST /api/auctions/:id/bid: updates your_bid, sets your_rank=#1, prepends bid to history ✓ (5) Connected order state machine: Complete lifecycle tested on CB-1042: inbound receive → QC_PENDING + lot 'QC pending' + inspection 'Pending' ✓; QC PASS → QC_PASSED + lot 'Available' ✓; advance ALLOCATED → lot 'Allocated' ✓; advance OUTBOUND_DISPATCHED → outbound 'Dispatched' ✓; advance DELIVERED → outbound 'Delivered' + pod=true ✓; advance ACCEPTED → settlement 'Approved' ✓; QC FAIL path → QC_FAILED + lot 'Quality hold' + new dispute created ✓ (6) Auth: GET /auth/me no cookie → 401 user:null ✓; POST /auth/session no session_id → 400 ✓; POST /auth/session bogus session_id → 401 ✓; valid session via MongoDB → returns user with cookie and bearer token ✓. NO REGRESSIONS DETECTED. The MongoDB connection race fix is working correctly under concurrent load."
+
 frontend:
+  - task: "Create Demand redesign + input focus bug fix"
+    implemented: true
+    working: true
+    file: "components/cb/BuyerApp.js, components/cb/shared.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "Rewrote NewDemand into a rich 6-step wizard (Material/Requirement/Specifications/Delivery/Commercials/Review) with a live 'Demand summary / You're in good company / Potential savings / Estimated timeline' sidebar. ROOT CAUSE of the reported 'text boxes have to be reselected after one input' bug: form field components were defined INSIDE the render body, so every keystroke re-created the component and React remounted the input, losing focus. Fixed by adding stable module-level primitives (TextField/SelectField/TextAreaField/Chip) in shared.js. Verified via screenshot: typed 5 chars into the Application textarea with delay and all characters were retained (focus kept)."
+  - task: "Savings Story (before/after pooling)"
+    implemented: true
+    working: true
+    file: "components/cb/BuyerApp.js"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "New 'My Savings' view: before/after summary cards (buy alone vs pooled vs saved), grouped bar chart by material, savings-driver breakdown, and a line-by-line table. Verified via screenshot."
+  - task: "Live auction countdown (auto-close)"
+    implemented: true
+    working: true
+    file: "components/cb/SellerApp.js, components/cb/shared.js"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "Added Countdown component; Seller Auctions list + LiveAuction header now tick down live from time_remaining and auto-close at zero (disables bidding, shows win/award message). Verified via screenshot (timer ticked 04:32 -> 04:30)."
+  - task: "Live map delivery tracking (OpenStreetMap)"
+    implemented: true
+    working: true
+    file: "components/cb/LiveMap.js, components/cb/OpsApp.js, components/cb/BuyerApp.js"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "Replaced 'map integration-ready placeholder' with a real Leaflet + OSM map (no API key). Animated truck marker interpolates hub->buyer with a live creep when in transit. Used in Ops Delivery Tracking and Buyer Shipments. Disabled reactStrictMode in next.config.js to avoid react-leaflet v4 double-init in dev. Verified via screenshot."
+  - task: "Dashboard graphs (recharts) + Settings/Profile pages"
+    implemented: true
+    working: true
+    file: "components/cb/charts.js, components/cb/settings.js, components/cb/*App.js"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "Added recharts wrappers (TrendArea/GroupedBars/Donut/ScoreRadar). Buyer overview: spend vs savings + spend-by-material. Seller performance: scorecard radar + quotes-vs-wins. Admin overview: GMV/orders trend, orders-by-stage donut, pool fill by cluster bars, network health. Added shared CompanySettings + ProfilePage wired into every role via TopBar user dropdown and sidebar. Verified via screenshot."
   - task: "Multi-role UI (Landing + Buyer/Seller/Ops/Admin apps, Google sign-in, role switcher)"
     implemented: true
     working: "NA"
@@ -201,12 +271,12 @@ frontend:
     status_history:
         -working: "NA"
         -agent: "main"
-        -comment: "Verified visually via screenshots (landing, buyer dashboard, ops overview, seller live auction). Not yet formally tested by frontend agent — awaiting user go-ahead."
+        -comment: "Verified visually via screenshots. Not yet formally tested by frontend agent — awaiting user go-ahead. NOTE for frontend agent: real Google OAuth cannot be completed automatically; a dev session exists in Mongo (users id=dev-user-0001, sessions session_token=devtoken123). Add cookie session_token=devtoken123 to the browser context to reach authenticated dashboards, then use the bottom-left Demo role switcher (Buyer/Seller/Warehouse/Admin)."
 
 metadata:
   created_by: "main_agent"
-  version: "1.0"
-  test_sequence: 1
+  version: "1.2"
+  test_sequence: 3
   run_ui: false
 
 test_plan:
@@ -220,3 +290,7 @@ agent_communication:
     -message: "Please test the ClusterBuy backend at the /api prefix. Start by calling POST /api/seed to populate data. Then verify all list/detail GET endpoints, POST /api/demands, POST /api/auctions/:id/bid, and MOST IMPORTANTLY the connected order state machine (advance/receive/quality/allocate/outbound/deliver/accept) — confirm that advancing an order mutates the linked inventory lot, shipments, inspection and settlement. For auth: real Google OAuth cannot be completed automatically; verify /auth/me (401 no cookie), /auth/session (400 without session_id, 401 with a bogus session_id). You MAY insert a users doc and a sessions doc directly into Mongo (MONGO_URL, DB_NAME from /app/.env) to verify /auth/me returns the user with a valid session_token cookie. Do NOT use curl in a way that fails the run; use the python requests-based harness. All IDs are UUIDs, no Mongo _id should appear in responses."
     -agent: "testing"
     -message: "🎉 BACKEND TESTING COMPLETE - ALL 52 TESTS PASSED! Comprehensive testing completed on all ClusterBuy backend APIs. (1) Seed endpoint: idempotent, returns correct stats ✓ (2) All 17 list endpoints: no _id fields, filters working ✓ (3) All 6 detail endpoints: proper joins, clean responses ✓ (4) Create demand: correct format and status ✓ (5) Auction bid: updates correctly ✓ (6) CRITICAL state machine: complete lifecycle tested including PASS and FAIL paths, all side effects propagate correctly ✓ (7) Auth: all scenarios tested including valid session via MongoDB ✓. NO ISSUES FOUND. Backend is production-ready."
+    -agent: "main"
+    -message: "RE-TEST REQUEST (v1.1): Only backend change this round is a MongoDB connection race fix in connectToMongo() (route.js). Please re-run the core backend suite and specifically hammer PARALLEL requests to catch any regression: (a) POST /api/seed once, (b) fire many concurrent GETs (/pools /demands /orders /inventory /shipments /settlements /auctions /inspections) and confirm ZERO 500s / no 'Cannot read properties of undefined (reading collection)', (c) POST /api/demands (now receives extra fields like category/application/spec-as-string — should still create DEM-#### with status Matching), (d) POST /api/auctions/:id/bid, (e) the state-machine chain on one order. Everything else changed is frontend-only."
+    -agent: "testing"
+    -message: "🎉 REGRESSION TEST COMPLETE - ALL 54 TESTS PASSED! MongoDB connection race fix verified working perfectly. CONCURRENCY CHECK (CRITICAL): Fired 20 parallel GET requests - ZERO 500 errors, NO race condition errors detected. All responses valid JSON arrays with UUID ids, no _id fields. POST /api/seed: idempotent with correct stats. POST /api/demands: accepts new fields (category, brand, application, delivery_pref, target_price, spec as STRING), creates DEM-#### with status='Matching'. POST /api/auctions/:id/bid: working correctly. Connected order state machine: Complete lifecycle verified including PASS and FAIL paths, all side effects propagate correctly. Auth: all scenarios pass. NO REGRESSIONS DETECTED. Backend is stable and production-ready."

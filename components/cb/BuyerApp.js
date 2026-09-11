@@ -1,18 +1,25 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { api, inr, inrShort, prettyState } from '@/lib/cb/api'
-import { Sidebar, TopBar, KpiCard, Panel, DataTable, StatusBadge, Fill, Timeline, CostBreakdown } from '@/components/cb/shared'
+import { Sidebar, TopBar, KpiCard, Panel, DataTable, StatusBadge, Fill, Timeline, CostBreakdown, TextField, SelectField, TextAreaField, Chip, SectionTitle } from '@/components/cb/shared'
+import { TrendArea, GroupedBars, Donut, TEAL, NAVY, AMBER } from '@/components/cb/charts'
+import { CompanySettings, ProfilePage } from '@/components/cb/settings'
 import {
   LayoutDashboard, FileText, Users, ReceiptText, Package, Truck, Boxes, CreditCard,
   Files, AlertTriangle, Building2, Bell, LifeBuoy, Settings, Plus, ArrowRight, ArrowLeft, CheckCircle2,
+  Info, Sparkles, Calendar, IndianRupee, TrendingUp, Layers, BarChart3, PiggyBank, MapPin, Save, User,
 } from 'lucide-react'
 import { toast } from 'sonner'
+
+const LiveMap = dynamic(() => import('@/components/cb/LiveMap'), { ssr: false, loading: () => <div className="grid h-full min-h-[240px] place-items-center rounded-xl bg-slate-50 text-[12px] text-slate-400">Loading map…</div> })
 
 const NAV = [
   { key: 'overview', label: 'Overview', icon: LayoutDashboard },
   { key: 'demands', label: 'My Demands', icon: FileText },
   { key: 'pools', label: 'Demand Pools', icon: Users },
+  { key: 'savings', label: 'My Savings', icon: PiggyBank },
   { key: 'quotes', label: 'Quotes', icon: ReceiptText },
   { key: 'orders', label: 'Orders', icon: Package },
   { key: 'shipments', label: 'Shipments', icon: Truck },
@@ -26,6 +33,42 @@ const NAV = [
   { key: 'settings', label: 'Company Settings', icon: Settings },
 ]
 
+// ---- Dashboard chart data ----
+const SPEND_TREND = [
+  { month: 'Jan', spend: 3.2, saved: 0.3 }, { month: 'Feb', spend: 3.6, saved: 0.4 },
+  { month: 'Mar', spend: 4.1, saved: 0.52 }, { month: 'Apr', spend: 3.9, saved: 0.48 },
+  { month: 'May', spend: 4.35, saved: 0.61 }, { month: 'Jun', spend: 4.6, saved: 0.72 },
+]
+const SPEND_MIX = [
+  { name: 'PP', value: 42 }, { name: 'HDPE', value: 24 }, { name: 'LDPE', value: 16 },
+  { name: 'PET', value: 12 }, { name: 'ABS', value: 6 },
+]
+
+// ---- Material catalog for the Create Demand wizard ----
+const MATERIAL_CATEGORIES = {
+  'Plastics & Polymers': ['PP (Polypropylene)', 'HDPE', 'LDPE', 'PET Resin', 'ABS', 'PVC'],
+  'Metals': ['Mild Steel', 'Stainless Steel 304', 'Aluminium 6061', 'Copper'],
+  'Chemicals': ['Titanium Dioxide', 'Calcium Carbonate', 'Caustic Soda'],
+  'Packaging': ['Corrugated Board', 'BOPP Film', 'Stretch Wrap'],
+}
+const MATERIAL_INFO = {
+  'PP (Polypropylene)': { blurb: 'Polypropylene (PP) is widely used for injection molding, offering high strength, good chemical resistance and easy processability. Common applications include packaging, automotive parts and consumer goods.', grades: ['Grade X', 'Grade Y', 'Grade R'], related: ['HDPE', 'LDPE', 'ABS'], applications: ['Packaging', 'Automotive', 'Consumer goods', 'Industrial'], savings: '12 – 28%' },
+  'HDPE': { blurb: 'High-Density Polyethylene (HDPE) is a rigid, durable polymer with excellent strength-to-density ratio. Used for pipes, containers, crates and blow-moulded products.', grades: ['Blow', 'Injection', 'Pipe'], related: ['LDPE', 'PP (Polypropylene)'], applications: ['Pipes', 'Containers', 'Crates', 'Films'], savings: '10 – 24%' },
+  'LDPE': { blurb: 'Low-Density Polyethylene (LDPE) is flexible and tough, ideal for films, liners and flexible packaging.', grades: ['Film', 'General'], related: ['HDPE', 'PP (Polypropylene)'], applications: ['Films', 'Liners', 'Flexible packaging'], savings: '9 – 22%' },
+  'PET Resin': { blurb: 'PET resin offers clarity, strength and good barrier properties, widely used for bottles and food-grade packaging.', grades: ['Bottle', 'Fibre'], related: ['HDPE', 'PP (Polypropylene)'], applications: ['Bottles', 'Food packaging', 'Fibre'], savings: '11 – 20%' },
+  'ABS': { blurb: 'ABS is a tough engineering thermoplastic with good impact resistance and surface finish, used for enclosures and automotive trims.', grades: ['General', 'Plating'], related: ['PP (Polypropylene)', 'PVC'], applications: ['Enclosures', 'Automotive trim', 'Appliances'], savings: '12 – 26%' },
+}
+const DEFAULT_INFO = { blurb: 'Tell us your requirement and we will pool it with similar demand from nearby MSMEs to unlock better supplier pricing.', grades: ['Standard'], related: [], applications: ['General'], savings: '10 – 25%' }
+const POOL_PEERS = ['AP', 'BC', 'GP', 'VP', 'MA']
+
+// ---- Savings story data (before / after pooling) ----
+const SAVINGS_ROWS = [
+  { material: 'PP Grade X', qty: 5, alone: 92, pooled: 79, unit: 'kg' },
+  { material: 'HDPE Blow', qty: 8, alone: 88, pooled: 77, unit: 'kg' },
+  { material: 'LDPE Film', qty: 6, alone: 95, pooled: 84, unit: 'kg' },
+  { material: 'PET Resin', qty: 4, alone: 101, pooled: 90, unit: 'kg' },
+]
+
 export default function BuyerApp({ user, onLogout, roleSwitcher }) {
   const [view, setView] = useState('overview')
   const [sel, setSel] = useState(null) // {type, id}
@@ -36,12 +79,13 @@ export default function BuyerApp({ user, onLogout, roleSwitcher }) {
     <div className="flex h-screen bg-[#E6EDF3]/40">
       <Sidebar items={NAV} active={view} onNav={go} dark={false} footer="Indian MSMEs · Stronger together" />
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar title="Your procurement" subtitle="Track your demands, pools and orders in one place." user={user} onLogout={onLogout} roleSwitcher={roleSwitcher}
+        <TopBar title="Your procurement" subtitle="Track your demands, pools and orders in one place." user={user} onLogout={onLogout} roleSwitcher={roleSwitcher} onNavigate={go}
           right={<button onClick={() => go('new')} className="flex items-center gap-1.5 rounded-lg bg-[#007F78] px-3.5 py-2 text-[13px] font-semibold text-white hover:brightness-110"><Plus className="h-4 w-4" /> New demand</button>} />
         <main className="flex-1 overflow-y-auto p-6">
           {view === 'overview' && <Overview go={go} openOrder={(id) => { setSel({ type: 'order', id }); setView('orderDetail') }} />}
-          {view === 'new' && <NewDemand onDone={() => go('demands')} />}
+          {view === 'new' && <NewDemand onDone={() => go('demands')} back={() => go('demands')} />}
           {view === 'demands' && <Demands go={go} />}
+          {view === 'savings' && <SavingsStory />}
           {view === 'pools' && <Pools open={(id) => { setSel({ type: 'pool', id }); setView('poolDetail') }} />}
           {view === 'poolDetail' && <PoolDetail id={sel?.id} back={() => go('pools')} openQuotes={(id) => { setSel({ type: 'pool', id }); setView('quotes') }} />}
           {view === 'quotes' && <Quotes poolId={sel?.id} />}
@@ -54,7 +98,9 @@ export default function BuyerApp({ user, onLogout, roleSwitcher }) {
           {view === 'disputes' && <SimpleList collection="/disputes" title="Disputes" cols={[['case_no', 'Case'], ['order_no', 'Order'], ['title', 'Issue'], ['status', 'Status', true]]} />}
           {view === 'suppliers' && <SimpleList collection="/sellers" title="Suppliers" cols={[['name', 'Company'], ['rating', 'Rating'], ['on_time', 'On-time %'], ['qc_pass', 'QC pass %']]} />}
           {view === 'notifications' && <Notifications role="BUYER" />}
-          {(view === 'support' || view === 'settings') && <Stub title={NAV.find(n => n.key === view)?.label} />}
+          {view === 'profile' && <ProfilePage user={user} roleLabel="Procurement Manager" />}
+          {view === 'settings' && <CompanySettings role="BUYER" companyName="Apex Plastics Pvt. Ltd." cluster="Peenya, Bengaluru" />}
+          {view === 'support' && <Stub title="Support" />}
         </main>
       </div>
     </div>
@@ -79,6 +125,15 @@ function Overview({ go, openOrder }) {
         <KpiCard label="Goods ready" value={1} sub="for pickup" icon={Truck} accent="#142D4E" />
         <KpiCard label="Monthly spend" value={inrShort(4350000)} icon={CreditCard} accent="#F59E0B" />
         <KpiCard label="Est. savings" value={inrShort(612000)} sub="through pooling" icon={CheckCircle2} />
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        <Panel className="lg:col-span-2" title="Spend vs savings" subtitle="Monthly procurement spend and what pooling saved you">
+          <TrendArea data={SPEND_TREND} xKey="month" series={[{ key: 'spend', name: 'Spend', color: NAVY }, { key: 'saved', name: 'Saved by pooling', color: TEAL }]} height={230} />
+        </Panel>
+        <Panel title="Spend by material">
+          <Donut data={SPEND_MIX} height={230} centerLabel="this quarter" centerValue={inrShort(4350000)} />
+        </Panel>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -125,15 +180,32 @@ function Overview({ go, openOrder }) {
   )
 }
 
-const STEPS = ['Material', 'Requirement', 'Specification', 'Delivery', 'Commercial', 'Review']
-function NewDemand({ onDone }) {
+const STEPS = [
+  { label: 'Material', icon: Boxes }, { label: 'Requirement', icon: Layers }, { label: 'Specifications', icon: FileText },
+  { label: 'Delivery', icon: Truck }, { label: 'Commercials', icon: IndianRupee }, { label: 'Review', icon: CheckCircle2 },
+]
+
+function NewDemand({ onDone, back }) {
   const [step, setStep] = useState(0)
-  const [f, setF] = useState({ material: 'PP Grade X', grade: 'X', quantity: 5, unit: 'tonnes', required_date: '2025-09-30', cluster: 'Peenya, Bengaluru', delivery_pref: 'Pickup at hub', target_price: 80 })
+  const [f, setF] = useState({
+    category: 'Plastics & Polymers', material: 'PP (Polypropylene)', grade: 'Grade X', brand: '',
+    application: 'Injection molding components for consumer goods.', quantity: '', unit: 'tonnes', min_qty: '',
+    required_date: '', spec: '', tolerance: '', cert: '', packaging: '', cluster: 'Peenya, Bengaluru',
+    address: '', pincode: '', delivery_pref: 'Pickup at hub', target_price: '', max_cost: '',
+    payment_terms: '30 days', gst: 'GST invoice required',
+  })
   const [done, setDone] = useState(null)
-  const set = (k, v) => setF(s => ({ ...s, [k]: v }))
+  const set = (k, v) => setF((s) => ({ ...s, [k]: v }))
+  const info = MATERIAL_INFO[f.material] || DEFAULT_INFO
+
   const submit = async () => {
-    try { const d = await api('/demands', { method: 'POST', body: JSON.stringify(f) }); setDone(d); toast.success(`Demand ${d.demand_no} submitted`) } catch (e) { toast.error(e.message) }
+    try {
+      const payload = { ...f, quantity: Number(f.quantity) || 5, target_price: Number(f.target_price) || undefined }
+      const d = await api('/demands', { method: 'POST', body: JSON.stringify(payload) })
+      setDone(d); toast.success(`Demand ${d.demand_no} submitted`)
+    } catch (e) { toast.error(e.message) }
   }
+
   if (done) return (
     <div className="mx-auto max-w-xl">
       <Panel>
@@ -142,51 +214,282 @@ function NewDemand({ onDone }) {
           <div className="mt-3 text-[13px] uppercase tracking-wide text-slate-400">Demand submitted</div>
           <div className="text-[26px] font-bold text-[#142D4E]">{done.demand_no}</div>
           <StatusBadge status="Matching" className="mt-2" />
-          <p className="mt-3 max-w-sm text-[13px] text-slate-500">We&apos;re matching your requirement with similar demand from nearby MSMEs to build a pool.</p>
+          <p className="mt-3 max-w-sm text-[13px] text-slate-500">We&apos;re matching your requirement with similar demand from nearby MSMEs to build a pool and unlock better pricing.</p>
           <button onClick={onDone} className="mt-5 rounded-lg bg-[#007F78] px-5 py-2.5 text-[13px] font-semibold text-white">Go to my demands</button>
         </div>
       </Panel>
     </div>
   )
-  const Input = ({ label, k, type = 'text', ...p }) => (
-    <label className="block"><span className="mb-1 block text-[12.5px] font-medium text-slate-600">{label}</span>
-      <input type={type} value={f[k] ?? ''} onChange={e => set(k, type === 'number' ? Number(e.target.value) : e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-[13px] outline-none focus:border-[#007F78]" {...p} /></label>
-  )
+
+  const next = () => setStep((s) => Math.min(STEPS.length - 1, s + 1))
+  const prev = () => setStep((s) => Math.max(0, s - 1))
+  const isLast = step === STEPS.length - 1
+  const summaryVal = (v, suffix = '') => (v === '' || v == null) ? <span className="text-slate-300">—</span> : <span className="font-medium text-[#142D4E]">{v}{suffix}</span>
+
   return (
-    <div className="mx-auto max-w-2xl">
-      <Panel title="Submit your material demand" subtitle="Share your requirement and we&apos;ll pool it with other buyers.">
-        <div className="mb-5 flex items-center gap-1.5">
-          {STEPS.map((s, i) => (
-            <div key={i} className="flex flex-1 items-center gap-1.5">
-              <span className={`grid h-6 w-6 place-items-center rounded-full text-[11px] font-bold ${i <= step ? 'bg-[#007F78] text-white' : 'bg-slate-100 text-slate-400'}`}>{i + 1}</span>
-              {i < STEPS.length - 1 && <span className={`h-0.5 flex-1 ${i < step ? 'bg-[#007F78]' : 'bg-slate-100'}`} />}
-            </div>
-          ))}
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <button onClick={back} className="mb-1 flex items-center gap-1 text-[12.5px] font-semibold text-[#007F78]"><ArrowLeft className="h-4 w-4" /> Back to My Demands</button>
+          <h1 className="text-[26px] font-bold text-[#142D4E]">Create New Demand</h1>
+          <p className="text-[13px] text-slate-400">Submit your raw material requirement and let&apos;s find better prices together.</p>
         </div>
-        <div className="mb-1 text-[15px] font-bold text-[#142D4E]">{STEPS[step]}</div>
-        <div className="grid grid-cols-2 gap-4 py-3">
-          {step === 0 && <><Input label="Material" k="material" /><Input label="Grade" k="grade" /><Input label="Brand preference" k="brand" /><Input label="Application / use case" k="application" /></>}
-          {step === 1 && <><Input label="Quantity" k="quantity" type="number" /><Input label="Unit" k="unit" /><Input label="Minimum acceptable qty" k="min_qty" type="number" /><Input label="Required-by date" k="required_date" type="date" /></>}
-          {step === 2 && <><Input label="Specification" k="spec" /><Input label="Tolerance" k="tolerance" /><Input label="Certification required" k="cert" /><Input label="Packaging requirement" k="packaging" /></>}
-          {step === 3 && <><Input label="Cluster" k="cluster" /><Input label="Delivery address" k="address" /><Input label="Pincode" k="pincode" />
-            <label className="block"><span className="mb-1 block text-[12.5px] font-medium text-slate-600">Delivery preference</span>
-              <select value={f.delivery_pref} onChange={e => set('delivery_pref', e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-[13px] outline-none focus:border-[#007F78]">
-                <option>Pickup at hub</option><option>Deliver to factory</option><option>Direct supplier delivery</option></select></label></>}
-          {step === 4 && <><Input label="Target price (/kg)" k="target_price" type="number" /><Input label="Max landed cost (/kg)" k="max_cost" type="number" /><Input label="Payment terms" k="payment_terms" /><Input label="GST requirements" k="gst" /></>}
-          {step === 5 && (
-            <div className="col-span-2 rounded-lg border border-slate-200 bg-slate-50 p-4 text-[13px]">
-              {[['Material', `${f.material} ${f.grade}`], ['Quantity', `${f.quantity} ${f.unit}`], ['Required by', f.required_date], ['Cluster', f.cluster], ['Delivery', f.delivery_pref], ['Target price', inr(f.target_price) + '/kg']].map(([l, v]) => (
-                <div key={l} className="flex justify-between border-b border-slate-100 py-1.5 last:border-0"><span className="text-slate-500">{l}</span><span className="font-medium text-[#142D4E]">{v}</span></div>
-              ))}
+        <div className="flex gap-2">
+          <button onClick={() => toast.success('Saved as draft')} className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-[13px] font-semibold text-slate-600 hover:bg-slate-50"><Save className="h-4 w-4" /> Save as draft</button>
+          <button onClick={isLast ? submit : next} className="flex items-center gap-1.5 rounded-lg bg-[#142D4E] px-5 py-2.5 text-[13px] font-semibold text-white hover:brightness-110">{isLast ? 'Submit demand' : 'Next'} <ArrowRight className="h-4 w-4" /></button>
+        </div>
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="min-w-0 space-y-5 rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
+          {/* Stepper */}
+          <div className="flex items-center gap-1 overflow-x-auto pb-1">
+            {STEPS.map((s, i) => (
+              <div key={s.label} className="flex flex-1 items-center gap-1">
+                <button onClick={() => setStep(i)} className="flex min-w-max flex-col items-center gap-1">
+                  <span className={`grid h-8 w-8 place-items-center rounded-full text-[12px] font-bold transition ${i < step ? 'bg-[#007F78] text-white' : i === step ? 'bg-[#007F78] text-white ring-4 ring-[#007F78]/15' : 'bg-slate-100 text-slate-400'}`}>{i < step ? <CheckCircle2 className="h-4 w-4" /> : i + 1}</span>
+                  <span className={`text-[11px] font-semibold ${i <= step ? 'text-[#142D4E]' : 'text-slate-400'}`}>{s.label}</span>
+                </button>
+                {i < STEPS.length - 1 && <span className={`mb-4 h-0.5 flex-1 ${i < step ? 'bg-[#007F78]' : 'bg-slate-100'}`} />}
+              </div>
+            ))}
+          </div>
+
+          {/* Step 0: Material */}
+          {step === 0 && (
+            <div className="space-y-5">
+              <SectionTitle icon={Boxes} title={`${step + 1}. Material Details`} subtitle="Tell us what material you need." />
+              <div className="grid gap-4 md:grid-cols-2">
+                <SelectField label="Material category" required value={f.category} onChange={(v) => { const first = MATERIAL_CATEGORIES[v][0]; setF((s) => ({ ...s, category: v, material: first, grade: (MATERIAL_INFO[first] || DEFAULT_INFO).grades[0] })) }} options={Object.keys(MATERIAL_CATEGORIES)} />
+                <SelectField label="Material" required value={f.material} onChange={(v) => { setF((s) => ({ ...s, material: v, grade: (MATERIAL_INFO[v] || DEFAULT_INFO).grades[0] })) }} options={MATERIAL_CATEGORIES[f.category] || []} />
+                <SelectField label="Grade" required value={f.grade} onChange={(v) => set('grade', v)} options={info.grades} />
+                <TextField label="Brand preference (optional)" value={f.brand} onChange={(v) => set('brand', v)} placeholder="e.g. Reliance, SABIC, Borealis" />
+              </div>
+              <TextAreaField label="Application / Use case" required value={f.application} onChange={(v) => set('application', v)} maxLength={500} rows={3} placeholder="Where and how will you use this material?" />
+
+              <div className="flex flex-col gap-4 rounded-xl border border-blue-100 bg-blue-50/50 p-4 sm:flex-row">
+                <span className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-lg bg-blue-100 text-blue-600"><Info className="h-5 w-5" /></span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[14px] font-bold text-[#142D4E]">About {f.material} {f.grade}</div>
+                  <p className="mt-1 text-[12.5px] leading-relaxed text-slate-500">{info.blurb}</p>
+                  <button onClick={() => toast('Material spec sheet opened')} className="mt-2 text-[12.5px] font-semibold text-[#007F78]">View material specs →</button>
+                </div>
+                <div className="hidden h-20 w-28 flex-shrink-0 place-items-center rounded-lg bg-gradient-to-br from-slate-200 to-slate-100 text-slate-400 sm:grid"><Boxes className="h-8 w-8" /></div>
+              </div>
+
+              <div className="flex flex-col gap-3 rounded-xl border border-[#007F78]/20 bg-[#007F78]/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <span className="grid h-9 w-9 place-items-center rounded-lg bg-[#007F78]/15 text-[#007F78]"><Sparkles className="h-5 w-5" /></span>
+                  <div><div className="text-[13.5px] font-semibold text-[#142D4E]">Need help choosing the right material?</div><div className="text-[12px] text-slate-500">Get recommendations based on your use case.</div></div>
+                </div>
+                <button onClick={() => toast.success('AI suggested: PP Grade X for your use case')} className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-[#007F78] bg-white px-4 py-2 text-[13px] font-semibold text-[#007F78]"><Sparkles className="h-4 w-4" /> Get AI suggestions</button>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 p-3.5">
+                  <div className="mb-2 flex items-center gap-1.5 text-[12px] font-semibold text-slate-500"><Layers className="h-4 w-4" /> Common grades</div>
+                  <div className="flex flex-wrap gap-1.5">{info.grades.map((g) => <Chip key={g} active={f.grade === g} onClick={() => set('grade', g)}>{g}</Chip>)}</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 p-3.5">
+                  <div className="mb-2 flex items-center gap-1.5 text-[12px] font-semibold text-slate-500"><Boxes className="h-4 w-4" /> Related materials</div>
+                  <div className="flex flex-wrap gap-1.5">{(info.related.length ? info.related : ['—']).map((m) => <Chip key={m} onClick={() => MATERIAL_INFO[m] && set('material', m)}>{m}</Chip>)}</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 p-3.5">
+                  <div className="mb-2 flex items-center gap-1.5 text-[12px] font-semibold text-slate-500"><FileText className="h-4 w-4" /> Typical applications</div>
+                  <div className="flex flex-wrap gap-1.5">{info.applications.map((a) => <Chip key={a}>{a}</Chip>)}</div>
+                </div>
+              </div>
             </div>
           )}
+
+          {/* Step 1: Requirement */}
+          {step === 1 && (
+            <div className="space-y-5">
+              <SectionTitle icon={Layers} title="2. Requirement" subtitle="How much do you need and by when?" />
+              <div className="grid gap-4 md:grid-cols-2">
+                <TextField label="Quantity" required type="number" value={f.quantity} onChange={(v) => set('quantity', v)} placeholder="e.g. 5" />
+                <SelectField label="Unit" value={f.unit} onChange={(v) => set('unit', v)} options={['tonnes', 'kg', 'quintal', 'bags']} />
+                <TextField label="Minimum acceptable quantity" type="number" value={f.min_qty} onChange={(v) => set('min_qty', v)} hint="Smallest quantity you'd still accept if the pool is partly filled." />
+                <TextField label="Required-by date" required type="date" value={f.required_date} onChange={(v) => set('required_date', v)} />
+              </div>
+            </div>
+          )}
+
+          {/* Step 2: Specifications */}
+          {step === 2 && (
+            <div className="space-y-5">
+              <SectionTitle icon={FileText} title="3. Specifications" subtitle="Quality parameters and certifications." />
+              <div className="grid gap-4 md:grid-cols-2">
+                <TextField label="Specification / MFI" value={f.spec} onChange={(v) => set('spec', v)} placeholder="e.g. MFI 12 g/10min" />
+                <TextField label="Tolerance" value={f.tolerance} onChange={(v) => set('tolerance', v)} placeholder="e.g. ± 2%" />
+                <SelectField label="Certification required" value={f.cert} onChange={(v) => set('cert', v)} options={['', 'COA', 'RoHS', 'FDA food-grade', 'REACH', 'ISO 9001']} />
+                <SelectField label="Packaging requirement" value={f.packaging} onChange={(v) => set('packaging', v)} options={['', '25 kg bags', '500 kg jumbo bags', 'Loose / bulk', 'Palletised']} />
+              </div>
+            </div>
+          )}
+
+          {/* Step 3: Delivery */}
+          {step === 3 && (
+            <div className="space-y-5">
+              <SectionTitle icon={Truck} title="4. Delivery" subtitle="Where should we deliver or pool for pickup?" />
+              <div className="grid gap-4 md:grid-cols-2">
+                <SelectField label="Cluster" required value={f.cluster} onChange={(v) => set('cluster', v)} options={['Peenya, Bengaluru', 'Bommasandra, Bengaluru', 'Bhiwandi, Maharashtra', 'Chakan, Pune', 'Sanand, Gujarat']} />
+                <SelectField label="Delivery preference" value={f.delivery_pref} onChange={(v) => set('delivery_pref', v)} options={['Pickup at hub', 'Deliver to factory', 'Direct supplier delivery']} />
+                <TextField className="md:col-span-2" label="Delivery address" value={f.address} onChange={(v) => set('address', v)} placeholder="Factory / warehouse address" />
+                <TextField label="Pincode" value={f.pincode} onChange={(v) => set('pincode', v)} />
+              </div>
+            </div>
+          )}
+
+          {/* Step 4: Commercials */}
+          {step === 4 && (
+            <div className="space-y-5">
+              <SectionTitle icon={IndianRupee} title="5. Commercials" subtitle="Your target pricing and terms." />
+              <div className="grid gap-4 md:grid-cols-2">
+                <TextField label="Target price (₹/kg)" type="number" value={f.target_price} onChange={(v) => set('target_price', v)} placeholder="e.g. 80" />
+                <TextField label="Max landed cost (₹/kg)" type="number" value={f.max_cost} onChange={(v) => set('max_cost', v)} />
+                <SelectField label="Payment terms" value={f.payment_terms} onChange={(v) => set('payment_terms', v)} options={['Advance', '15 days', '30 days', '45 days', '60 days']} />
+                <TextField label="GST requirement" value={f.gst} onChange={(v) => set('gst', v)} />
+              </div>
+            </div>
+          )}
+
+          {/* Step 5: Review */}
+          {step === 5 && (
+            <div className="space-y-5">
+              <SectionTitle icon={CheckCircle2} title="6. Review & submit" subtitle="Check the details before we start matching." />
+              <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 text-[13px]">
+                {[['Material', `${f.material} · ${f.grade}`], ['Application', f.application], ['Quantity', `${f.quantity || '—'} ${f.unit}`], ['Required by', f.required_date || '—'], ['Specification', f.spec || '—'], ['Cluster', f.cluster], ['Delivery', f.delivery_pref], ['Target price', f.target_price ? inr(f.target_price) + '/kg' : '—'], ['Payment terms', f.payment_terms]].map(([l, v]) => (
+                  <div key={l} className="flex justify-between gap-4 border-b border-slate-200/70 py-2 last:border-0"><span className="text-slate-500">{l}</span><span className="text-right font-medium text-[#142D4E]">{v}</span></div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between border-t border-slate-100 pt-4">
+            <button disabled={step === 0} onClick={prev} className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-4 py-2.5 text-[13px] font-semibold text-slate-600 disabled:opacity-40"><ArrowLeft className="h-4 w-4" /> Back</button>
+            {isLast
+              ? <button onClick={submit} className="rounded-lg bg-[#007F78] px-6 py-2.5 text-[13px] font-semibold text-white hover:brightness-110">Submit demand</button>
+              : <button onClick={next} className="flex items-center gap-1.5 rounded-lg bg-[#142D4E] px-5 py-2.5 text-[13px] font-semibold text-white hover:brightness-110">Next <ArrowRight className="h-4 w-4" /></button>}
+          </div>
         </div>
-        <div className="mt-4 flex justify-between">
-          <button disabled={step === 0} onClick={() => setStep(s => s - 1)} className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-4 py-2 text-[13px] font-semibold text-slate-600 disabled:opacity-40"><ArrowLeft className="h-4 w-4" /> Back</button>
-          {step < STEPS.length - 1
-            ? <button onClick={() => setStep(s => s + 1)} className="flex items-center gap-1.5 rounded-lg bg-[#142D4E] px-5 py-2 text-[13px] font-semibold text-white">Next <ArrowRight className="h-4 w-4" /></button>
-            : <button onClick={submit} className="rounded-lg bg-[#007F78] px-6 py-2 text-[13px] font-semibold text-white">Submit demand</button>}
+
+        {/* Right sidebar — "what you're getting" */}
+        <aside className="space-y-4">
+          <Panel>
+            <div className="mb-3 flex items-center justify-between">
+              <div className="flex items-center gap-2"><FileText className="h-4 w-4 text-slate-400" /><span className="text-[14px] font-bold text-[#142D4E]">Demand summary</span></div>
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-semibold text-emerald-600"><CheckCircle2 className="h-3 w-3" /> Auto-saved</span>
+            </div>
+            <div className="space-y-2.5 text-[12.5px]">
+              {[['Material', f.material, Boxes], ['Grade', f.grade, Layers], ['Application', (f.application || '').slice(0, 34) + ((f.application || '').length > 34 ? '…' : ''), FileText], ['Quantity', f.quantity ? `${f.quantity} ${f.unit}` : '', Layers], ['Required by', f.required_date, Calendar], ['Delivery', f.delivery_pref, Truck], ['Target price', f.target_price ? `${inr(f.target_price)}/kg` : '', IndianRupee]].map(([l, v, Icon]) => (
+                <div key={l} className="flex items-start justify-between gap-3">
+                  <span className="flex items-center gap-1.5 text-slate-400"><Icon className="h-3.5 w-3.5" /> {l}</span>
+                  <span className="text-right">{summaryVal(v)}</span>
+                </div>
+              ))}
+            </div>
+          </Panel>
+
+          <div className="rounded-xl border border-[#007F78]/20 bg-[#007F78]/5 p-4">
+            <div className="flex items-start gap-2.5">
+              <span className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-lg bg-[#007F78]/15 text-[#007F78]"><Users className="h-5 w-5" /></span>
+              <div>
+                <div className="text-[13.5px] font-bold text-[#142D4E]">You&apos;re in good company</div>
+                <p className="mt-0.5 text-[12px] text-slate-500">5 other MSMEs are likely to join a similar demand in your region.</p>
+              </div>
+            </div>
+            <div className="mt-3 flex items-center -space-x-2">
+              {POOL_PEERS.map((p) => <span key={p} className="grid h-7 w-7 place-items-center rounded-full border-2 border-white bg-[#142D4E] text-[9px] font-bold text-white">{p}</span>)}
+              <span className="grid h-7 w-7 place-items-center rounded-full border-2 border-white bg-[#007F78] text-[9px] font-bold text-white">+2</span>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
+            <div className="flex items-center gap-2 text-[13.5px] font-bold text-[#142D4E]"><BarChart3 className="h-4 w-4 text-[#F59E0B]" /> Potential savings</div>
+            <p className="mt-1 text-[12px] text-slate-500">Based on past pools, buyers saved</p>
+            <div className="mt-1 text-[24px] font-extrabold text-[#F59E0B]">{info.savings}<span className="ml-1 text-[12px] font-medium text-slate-500">by procuring together</span></div>
+          </div>
+
+          <Panel>
+            <div className="mb-3 flex items-center gap-2 text-[14px] font-bold text-[#142D4E]"><Calendar className="h-4 w-4 text-slate-400" /> Estimated timeline</div>
+            <ol className="space-y-2.5 text-[12.5px]">
+              {[['Today', 'Submit demand'], ['1–3 days', 'Find & match similar demands'], ['3–7 days', 'Pool formation'], ['7–14 days', 'Supplier quotes / auction'], ['14+ days', 'Order confirmation']].map(([t, d], i) => (
+                <li key={t} className="flex gap-2.5">
+                  <span className={`mt-1 h-2.5 w-2.5 flex-shrink-0 rounded-full ${i === 0 ? 'bg-[#007F78]' : 'bg-slate-300'}`} />
+                  <div><span className="font-semibold text-[#142D4E]">{t}</span> <span className="text-slate-500">— {d}</span></div>
+                </li>
+              ))}
+            </ol>
+          </Panel>
+        </aside>
+      </div>
+    </div>
+  )
+}
+
+// ---- Savings Story: before/after pooling vs buying alone ----
+function SavingsStory() {
+  const [orders, setOrders] = useState([])
+  useEffect(() => { api('/orders').then(setOrders).catch(() => {}) }, [])
+  const rows = SAVINGS_ROWS.map((r) => {
+    const kg = r.qty * 1000
+    const aloneTotal = r.alone * kg, pooledTotal = r.pooled * kg
+    return { ...r, kg, aloneTotal, pooledTotal, saved: aloneTotal - pooledTotal, pct: Math.round(((r.alone - r.pooled) / r.alone) * 100) }
+  })
+  const totalAlone = rows.reduce((a, r) => a + r.aloneTotal, 0)
+  const totalPooled = rows.reduce((a, r) => a + r.pooledTotal, 0)
+  const totalSaved = totalAlone - totalPooled
+  const avgPct = Math.round((totalSaved / totalAlone) * 100)
+  const chartData = rows.map((r) => ({ name: r.material.split(' ')[0], alone: Math.round(r.aloneTotal / 1000), pooled: Math.round(r.pooledTotal / 1000) }))
+
+  return (
+    <div className="space-y-6">
+      <SectionTitle icon={PiggyBank} title="Your savings story" subtitle="Here's what pooling with other MSMEs saved you versus buying alone." />
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <div className="text-[12.5px] font-medium text-slate-500">If you bought alone</div>
+          <div className="mt-2 text-[26px] font-bold text-slate-400 line-through">{inrShort(totalAlone)}</div>
+          <div className="mt-1 text-[12px] text-slate-400">Estimated individual spend</div>
         </div>
+        <div className="rounded-xl border border-[#007F78]/25 bg-[#007F78]/5 p-5">
+          <div className="text-[12.5px] font-medium text-[#007F78]">You paid (pooled)</div>
+          <div className="mt-2 text-[26px] font-bold text-[#142D4E]">{inrShort(totalPooled)}</div>
+          <div className="mt-1 text-[12px] text-slate-500">Actual pooled spend</div>
+        </div>
+        <div className="rounded-xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white p-5">
+          <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-[#F59E0B]"><TrendingUp className="h-4 w-4" /> You saved</div>
+          <div className="mt-2 text-[26px] font-extrabold text-[#F59E0B]">{inrShort(totalSaved)}</div>
+          <div className="mt-1 text-[12px] text-slate-500">{avgPct}% lower on average</div>
+        </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        <Panel className="lg:col-span-2" title="Before vs after by material" subtitle="Total cost (₹ '000) — buying alone vs pooled">
+          <GroupedBars data={chartData} xKey="name" series={[{ key: 'alone', name: 'Buying alone', color: '#CBD5E1' }, { key: 'pooled', name: 'Pooled with ClusterBuy', color: TEAL }]} height={260} />
+        </Panel>
+        <Panel title="Savings breakdown" subtitle="What drives your savings">
+          <div className="space-y-3.5">
+            {[['Volume discount', 62], ['Shared freight', 22], ['Lower platform fee', 9], ['Faster payment terms', 7]].map(([l, v]) => (
+              <div key={l}>
+                <div className="mb-1 flex justify-between text-[12.5px]"><span className="text-slate-500">{l}</span><span className="font-semibold text-[#142D4E]">{v}%</span></div>
+                <Fill pct={v} />
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+
+      <Panel title="Line-by-line savings" noPad>
+        <DataTable rows={rows} columns={[
+          { header: 'Material', cell: (r) => <span className="font-semibold text-[#142D4E]">{r.material}</span> },
+          { header: 'Qty', cell: (r) => `${r.qty} t` },
+          { header: 'Alone (/kg)', cell: (r) => <span className="text-slate-400 line-through">{inr(r.alone)}</span>, right: true },
+          { header: 'Pooled (/kg)', cell: (r) => <span className="font-semibold text-[#142D4E]">{inr(r.pooled)}</span>, right: true },
+          { header: 'You saved', cell: (r) => <span className="font-bold text-[#007F78]">{inrShort(r.saved)}</span>, right: true },
+          { header: '%', cell: (r) => <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] font-bold text-emerald-700">{r.pct}%</span>, right: true },
+        ]} />
       </Panel>
     </div>
   )
@@ -363,16 +666,38 @@ function OrderDetail({ id, back }) {
 
 function Shipments() {
   const [rows, setRows] = useState([])
-  useEffect(() => { api('/shipments?direction=outbound').then(setRows).catch(() => {}) }, [])
+  const [selId, setSelId] = useState(null)
+  useEffect(() => { api('/shipments?direction=outbound').then((r) => { setRows(r); const active = r.find((x) => x.status === 'Dispatched') || r[0]; setSelId(active?.id) }).catch(() => {}) }, [])
+  const sel = rows.find((r) => r.id === selId)
+  const progress = sel ? (sel.status === 'Delivered' ? 1 : sel.status === 'Dispatched' ? 0.5 : 0.15) : 0.15
+  const live = sel?.status === 'Dispatched'
   return (
-    <Panel title="Shipments to you" noPad>
-      <DataTable rows={rows} columns={[
-        { header: 'Shipment', cell: r => <span className="font-semibold text-[#142D4E]">{r.shipment_no}</span> },
-        { header: 'Order', key: 'order_no' }, { header: 'Material', key: 'material' },
-        { header: 'Qty', cell: r => `${r.quantity} t` }, { header: 'Vehicle', key: 'vehicle' },
-        { header: 'ETA', key: 'eta' }, { header: 'Status', cell: r => <StatusBadge status={r.status} /> },
-      ]} />
-    </Panel>
+    <div className="space-y-6">
+      {sel && (
+        <div className="grid gap-4 lg:grid-cols-3">
+          <Panel className="lg:col-span-2" title={`Live tracking — ${sel.shipment_no}`} subtitle={`${sel.from} → ${sel.to}`}>
+            <LiveMap fromKey={sel.from} toKey={sel.buyer_cluster || sel.to} progress={progress} live={live} height={300} />
+          </Panel>
+          <Panel title="Shipment details">
+            <div className="space-y-2.5 text-[13px]">
+              {[['Order', sel.order_no], ['Material', sel.material], ['Quantity', `${sel.quantity} t`], ['Vehicle', sel.vehicle], ['Driver', sel.driver], ['ETA', sel.eta]].map(([l, v]) => (
+                <div key={l} className="flex justify-between border-b border-slate-50 py-1.5 last:border-0"><span className="text-slate-400">{l}</span><span className="font-medium text-[#142D4E]">{v}</span></div>
+              ))}
+              <div className="flex justify-between pt-1"><span className="text-slate-400">Status</span><StatusBadge status={sel.status} /></div>
+            </div>
+            {live && <div className="mt-3 flex items-center gap-2 rounded-lg bg-[#007F78]/8 px-3 py-2 text-[12px] font-medium text-[#007F78]"><span className="h-2 w-2 animate-pulse rounded-full bg-[#007F78]" /> Vehicle moving — live position on map</div>}
+          </Panel>
+        </div>
+      )}
+      <Panel title="Shipments to you" noPad>
+        <DataTable rows={rows} onRow={(r) => setSelId(r.id)} columns={[
+          { header: 'Shipment', cell: r => <span className="font-semibold text-[#142D4E]">{r.shipment_no}</span> },
+          { header: 'Order', key: 'order_no' }, { header: 'Material', key: 'material' },
+          { header: 'Qty', cell: r => `${r.quantity} t` }, { header: 'Vehicle', key: 'vehicle' },
+          { header: 'ETA', key: 'eta' }, { header: 'Status', cell: r => <StatusBadge status={r.status} /> },
+        ]} />
+      </Panel>
+    </div>
   )
 }
 

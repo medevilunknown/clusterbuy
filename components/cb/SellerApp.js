@@ -1,12 +1,14 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { api, inr, inrShort } from '@/lib/cb/api'
-import { Sidebar, TopBar, KpiCard, Panel, DataTable, StatusBadge, Fill } from '@/components/cb/shared'
+import { Sidebar, TopBar, KpiCard, Panel, DataTable, StatusBadge, Fill, TextField, SelectField, Countdown, SectionTitle } from '@/components/cb/shared'
+import { ScoreRadar, GroupedBars, TrendArea, TEAL, NAVY, AMBER } from '@/components/cb/charts'
+import { CompanySettings, ProfilePage } from '@/components/cb/settings'
 import { Notifications, SimpleList, Stub } from '@/components/cb/BuyerApp'
 import {
   LayoutDashboard, Target, Gavel, ReceiptText, Package, Truck, Boxes, Wallet, Files,
-  BarChart3, AlertTriangle, Bell, Building2, ArrowRight, ArrowLeft, Clock, TrendingDown, CheckCircle2, Upload,
+  BarChart3, AlertTriangle, Bell, Building2, ArrowRight, ArrowLeft, Clock, TrendingDown, CheckCircle2, Upload, Trophy,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -34,7 +36,7 @@ export default function SellerApp({ user, onLogout, roleSwitcher }) {
     <div className="flex h-screen bg-[#E6EDF3]/40">
       <Sidebar items={NAV} active={view} onNav={go} dark footer="Shakti Polymers · Supplier" />
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar title="Supplier workspace" subtitle="What can you supply, at what price, and when do you get paid?" user={user} onLogout={onLogout} roleSwitcher={roleSwitcher} />
+        <TopBar title="Supplier workspace" subtitle="What can you supply, at what price, and when do you get paid?" user={user} onLogout={onLogout} roleSwitcher={roleSwitcher} onNavigate={go} />
         <main className="flex-1 overflow-y-auto p-6">
           {view === 'overview' && <Dash go={go} />}
           {view === 'opps' && <Opps open={(id) => { setSel(id); setView('oppDetail') }} />}
@@ -51,7 +53,8 @@ export default function SellerApp({ user, onLogout, roleSwitcher }) {
           {view === 'disputes' && <SimpleList collection="/disputes" title="Disputes" cols={[['case_no', 'Case'], ['order_no', 'Order'], ['title', 'Issue'], ['status', 'Status', true]]} />}
           {view === 'performance' && <Performance />}
           {view === 'notifications' && <Notifications role="SELLER" />}
-          {view === 'profile' && <Stub title="Company Profile" />}
+          {view === 'profile' && <CompanySettings role="SELLER" companyName="Shakti Polymers" cluster="Peenya, Bengaluru" />}
+          {view === 'settings' && <ProfilePage user={user} roleLabel="Supplier Account" />}
         </main>
       </div>
     </div>
@@ -108,10 +111,7 @@ function OppDetail({ id, back }) {
   const [q, setQ] = useState({ price: 78, moq: 5, available: 40, lead: 10, freight: 3, terms: '30 days', validity: '7 days' })
   useEffect(() => { if (id) api(`/pools/${id}`).then(setP).catch(() => {}) }, [id])
   if (!p) return <Stub title="Loading opportunity..." />
-  const F = ({ label, k, type = 'text' }) => (
-    <label className="block"><span className="mb-1 block text-[12.5px] font-medium text-slate-600">{label}</span>
-      <input type={type} value={q[k]} onChange={e => setQ(s => ({ ...s, [k]: type === 'number' ? Number(e.target.value) : e.target.value }))} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-[13px] outline-none focus:border-[#007F78]" /></label>
-  )
+  const set = (k, v) => setQ((s) => ({ ...s, [k]: v }))
   return (
     <div className="space-y-4">
       <button onClick={back} className="flex items-center gap-1 text-[13px] font-semibold text-[#007F78]"><ArrowLeft className="h-4 w-4" /> Back</button>
@@ -126,17 +126,20 @@ function OppDetail({ id, back }) {
           <p className="mt-3 rounded-lg bg-slate-50 p-3 text-[12px] text-slate-500">Buyer identities remain anonymized until contract rules permit disclosure.</p>
         </Panel>
         <Panel className="lg:col-span-2" title="Submit quotation">
-          <div className="grid grid-cols-2 gap-4">
-            <F label="Material price (₹/kg)" k="price" type="number" /><F label="MOQ (t)" k="moq" type="number" />
-            <F label="Available quantity (t)" k="available" type="number" /><F label="Lead time (days)" k="lead" type="number" />
-            <F label="Freight estimate (₹/kg)" k="freight" type="number" /><F label="Payment terms" k="terms" />
-            <F label="Validity" k="validity" />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <TextField label="Material price (₹/kg)" type="number" value={q.price} onChange={(v) => set('price', v)} />
+            <TextField label="MOQ (t)" type="number" value={q.moq} onChange={(v) => set('moq', v)} />
+            <TextField label="Available quantity (t)" type="number" value={q.available} onChange={(v) => set('available', v)} />
+            <TextField label="Lead time (days)" type="number" value={q.lead} onChange={(v) => set('lead', v)} />
+            <TextField label="Freight estimate (₹/kg)" type="number" value={q.freight} onChange={(v) => set('freight', v)} />
+            <SelectField label="Payment terms" value={q.terms} onChange={(v) => set('terms', v)} options={['Advance', '15 days', '30 days', '45 days']} />
+            <TextField label="Validity" value={q.validity} onChange={(v) => set('validity', v)} />
             <label className="block"><span className="mb-1 block text-[12.5px] font-medium text-slate-600">Certifications</span>
-              <div className="flex items-center gap-2 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-[12px] text-slate-400"><Upload className="h-4 w-4" /> Upload COA / test report</div></label>
+              <div className="flex items-center gap-2 rounded-lg border border-dashed border-slate-300 px-3 py-2.5 text-[12px] text-slate-400"><Upload className="h-4 w-4" /> Upload COA / test report</div></label>
           </div>
           <div className="mt-4 flex items-center justify-between rounded-lg bg-[#142D4E] px-4 py-3 text-white">
             <span className="text-[13px]">Estimated landed cost</span>
-            <span className="text-[16px] font-bold">{inr(q.price + q.freight + 3)}/kg</span>
+            <span className="text-[16px] font-bold">{inr(Number(q.price || 0) + Number(q.freight || 0) + 3)}/kg</span>
           </div>
           <div className="mt-4 flex gap-3">
             <button onClick={() => toast.success('Quotation submitted')} className="rounded-lg bg-[#007F78] px-5 py-2.5 text-[13px] font-semibold text-white">Submit quotation</button>
@@ -148,15 +151,19 @@ function OppDetail({ id, back }) {
   )
 }
 
+const parseHMS = (s) => { if (!s || s === '—') return 0; const p = s.split(':').map(Number); return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p[0] * 60 + p[1] }
+
 function Auctions({ open }) {
   const [rows, setRows] = useState([])
-  useEffect(() => { api('/auctions').then(setRows).catch(() => {}) }, [])
+  const [, force] = useState(0)
+  useEffect(() => { api('/auctions').then((r) => setRows(r.map((a) => ({ ...a, _endsAt: Date.now() + parseHMS(a.time_remaining) * 1000 })))).catch(() => {}) }, [])
   return (
     <Panel title="Auctions" noPad>
       <DataTable rows={rows} onRow={r => open(r.id)} columns={[
         { header: 'Auction', cell: r => <span className="font-semibold text-[#142D4E]">{r.auction_no}</span> },
         { header: 'Material', key: 'material' }, { header: 'Qty', cell: r => `${r.quantity} t` }, { header: 'Hub', key: 'hub' },
         { header: 'Your bid', cell: r => inr(r.your_bid) + '/kg' }, { header: 'Rank', cell: r => `#${r.your_rank}` },
+        { header: 'Time left', cell: r => r.status === 'Live' ? <Countdown compact endsAt={r._endsAt} onExpire={() => force((n) => n + 1)} /> : <span className="text-slate-400">{r.status === 'Scheduled' ? 'Scheduled' : '—'}</span> },
         { header: 'Status', cell: r => <StatusBadge status={r.status} /> },
         { header: '', cell: r => <span className="text-[12px] font-semibold text-[#007F78]">{r.status === 'Live' ? 'Enter auction' : 'View'}</span>, right: true },
       ]} />
@@ -166,33 +173,51 @@ function Auctions({ open }) {
 
 function LiveAuction({ id, back }) {
   const [a, setA] = useState(null); const [bid, setBid] = useState('')
-  const load = () => api(`/auctions/${id}`).then(x => { setA(x); setBid(String(x.current_bid - 1)) }).catch(() => {})
+  const [endsAt, setEndsAt] = useState(null); const [closed, setClosed] = useState(false)
+  const load = () => api(`/auctions/${id}`).then(x => {
+    setA(x); setBid(String(x.current_bid - 1))
+    const secs = parseHMS(x.time_remaining)
+    setEndsAt(Date.now() + (secs > 0 ? secs : 0) * 1000)
+    setClosed(x.status !== 'Live' && x.status !== 'Scheduled' ? true : secs <= 0 && x.status === 'Live')
+  }).catch(() => {})
   useEffect(() => { if (id) load() }, [id])
   if (!a) return <Stub title="Loading auction..." />
+  const won = a.your_rank === 1
   const place = async () => {
+    if (closed) return toast.error('Auction has closed')
     const v = Number(bid); if (!v) return
     try { const u = await api(`/auctions/${a.id}/bid`, { method: 'POST', body: JSON.stringify({ bid: v }) }); setA(u); toast.success(`Bid placed at ${inr(v)}/kg — you are now rank #1`) } catch (e) { toast.error(e.message) }
   }
   return (
     <div className="space-y-4">
       <button onClick={back} className="flex items-center gap-1 text-[13px] font-semibold text-[#007F78]"><ArrowLeft className="h-4 w-4" /> Back to auctions</button>
-      <div className="rounded-xl border border-slate-200 bg-[#142D4E] p-6 text-white">
+      <div className={`rounded-xl border p-6 text-white transition ${closed ? 'border-slate-300 bg-slate-600' : 'border-slate-200 bg-[#142D4E]'}`}>
         <div className="flex items-center justify-between">
           <div><div className="text-[24px] font-bold">{a.material} · {a.quantity} tonnes</div><div className="text-[13px] text-white/60">{a.cluster} · Hub {a.hub}</div></div>
-          <StatusBadge status={a.status} />
+          <StatusBadge status={closed ? 'Cancelled' : a.status} />
         </div>
         <div className="mt-5 grid grid-cols-3 gap-4">
-          <div className="rounded-lg bg-white/5 p-4"><div className="flex items-center gap-1.5 text-[12px] text-white/60"><Clock className="h-3.5 w-3.5" /> Time remaining</div><div className="mt-1 text-[26px] font-bold">{a.time_remaining}</div></div>
+          <div className="rounded-lg bg-white/5 p-4">
+            <div className="flex items-center gap-1.5 text-[12px] text-white/60"><Clock className="h-3.5 w-3.5" /> Time remaining</div>
+            <div className="mt-1 text-[26px] font-bold">
+              {closed ? 'Closed' : endsAt ? <Countdown compact endsAt={endsAt} onExpire={() => { setClosed(true); toast(won ? 'Auction closed — you won!' : 'Auction closed') }} className="text-white" /> : '—'}
+            </div>
+          </div>
           <div className="rounded-lg bg-white/5 p-4"><div className="text-[12px] text-white/60">Your current bid</div><div className="mt-1 text-[26px] font-bold">{inr(a.your_bid)}/kg</div></div>
           <div className="rounded-lg bg-white/5 p-4"><div className="text-[12px] text-white/60">Your rank</div><div className="mt-1 text-[26px] font-bold text-[#F59E0B]">#{a.your_rank}</div></div>
         </div>
+        {closed && (
+          <div className={`mt-4 flex items-center gap-2 rounded-lg px-4 py-3 text-[13px] font-semibold ${won ? 'bg-emerald-500/20 text-emerald-100' : 'bg-white/10 text-white/80'}`}>
+            <Trophy className="h-4 w-4" /> {won ? `You won this auction at ${inr(a.your_bid)}/kg. A purchase order will be issued shortly.` : 'Auction closed. Award goes to the lowest eligible landed-cost bid.'}
+          </div>
+        )}
       </div>
       <div className="grid gap-4 lg:grid-cols-3">
         <Panel title="Place a bid" className="lg:col-span-1">
           <label className="mb-1 block text-[12.5px] font-medium text-slate-600">Enter new bid (₹/kg)</label>
-          <input type="number" value={bid} onChange={e => setBid(e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-[16px] font-bold outline-none focus:border-[#007F78]" />
-          <div className="mt-1 text-[12px] text-slate-400">Minimum decrement {inr(a.decrement)}/kg. Award considers landed cost & eligibility.</div>
-          <button onClick={place} className="mt-3 w-full rounded-lg bg-[#007F78] py-2.5 text-[13px] font-semibold text-white">Review &amp; place bid</button>
+          <input type="number" value={bid} onChange={e => setBid(e.target.value)} disabled={closed} className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-[16px] font-bold outline-none focus:border-[#007F78] disabled:bg-slate-50 disabled:text-slate-400" />
+          <div className="mt-1 text-[12px] text-slate-400">Minimum decrement {inr(a.decrement)}/kg. Award considers landed cost &amp; eligibility.</div>
+          <button onClick={place} disabled={closed} className="mt-3 w-full rounded-lg bg-[#007F78] py-2.5 text-[13px] font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300">{closed ? 'Auction closed' : 'Review & place bid'}</button>
         </Panel>
         <Panel title="Your bid history" className="lg:col-span-2" noPad>
           <DataTable rows={a.bids || []} columns={[
@@ -285,19 +310,37 @@ function Settlements() {
 
 function Performance() {
   const stats = [['Price competitiveness', 82], ['Reliability', 88], ['Quality', 94], ['Delivery', 90], ['Dispute frequency', 12]]
+  const radar = [
+    { metric: 'Price', value: 82 }, { metric: 'Reliability', value: 88 }, { metric: 'Quality', value: 94 },
+    { metric: 'Delivery', value: 90 }, { metric: 'Response', value: 76 }, { metric: 'Compliance', value: 91 },
+  ]
+  const trend = [
+    { month: 'Jan', wins: 5, quotes: 11 }, { month: 'Feb', wins: 6, quotes: 12 }, { month: 'Mar', wins: 8, quotes: 13 },
+    { month: 'Apr', wins: 7, quotes: 12 }, { month: 'May', wins: 9, quotes: 14 }, { month: 'Jun', wins: 10, quotes: 15 },
+  ]
   return (
-    <div className="grid gap-4 md:grid-cols-2">
-      <Panel title="Supplier score">
-        {stats.map(([l, v]) => (
-          <div key={l} className="mb-3"><div className="mb-1 flex justify-between text-[13px]"><span className="text-slate-500">{l}</span><span className="font-semibold text-[#142D4E]">{v}</span></div><Fill pct={v} color={l === 'Dispute frequency' ? '#DC2626' : '#007F78'} /></div>
-        ))}
-      </Panel>
-      <div className="grid grid-cols-2 gap-4 self-start">
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <KpiCard label="Win rate" value="62%" icon={BarChart3} />
         <KpiCard label="On-time delivery" value="92%" icon={Truck} accent="#142D4E" />
         <KpiCard label="QC pass rate" value="94%" icon={CheckCircle2} />
         <KpiCard label="Rating" value="4.6" icon={BarChart3} accent="#F59E0B" />
       </div>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Panel title="Supplier scorecard" subtitle="How buyers and the platform rate you">
+          <ScoreRadar data={radar} height={280} />
+        </Panel>
+        <Panel title="Quotes vs wins" subtitle="Auction and quote outcomes over time">
+          <GroupedBars data={trend} xKey="month" series={[{ key: 'quotes', name: 'Quotes', color: NAVY }, { key: 'wins', name: 'Wins', color: TEAL }]} height={280} />
+        </Panel>
+      </div>
+      <Panel title="Score components">
+        <div className="grid gap-x-8 gap-y-3 md:grid-cols-2">
+          {stats.map(([l, v]) => (
+            <div key={l}><div className="mb-1 flex justify-between text-[13px]"><span className="text-slate-500">{l}</span><span className="font-semibold text-[#142D4E]">{v}</span></div><Fill pct={v} color={l === 'Dispute frequency' ? '#DC2626' : '#007F78'} /></div>
+          ))}
+        </div>
+      </Panel>
     </div>
   )
 }
