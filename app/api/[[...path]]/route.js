@@ -11,12 +11,16 @@ let connectingPromise
 
 async function connectToMongo() {
   if (db) return db
+  const mongoUrl = process.env.MONGO_URL || process.env.MONGODB_URI
+  if (!mongoUrl) {
+    throw new Error('MongoDB is not configured. Add MONGO_URL (or MONGODB_URI) to .env.local.')
+  }
   if (!connectingPromise) {
-    client = new MongoClient(process.env.MONGO_URL)
+    client = new MongoClient(mongoUrl)
     connectingPromise = client.connect()
   }
   await connectingPromise
-  db = client.db(process.env.DB_NAME)
+  db = client.db(process.env.DB_NAME || process.env.MONGO_DB_NAME || 'clusterbuy')
   return db
 }
 
@@ -35,6 +39,18 @@ export async function OPTIONS() {
 const json = (data, status = 200) => handleCORS(NextResponse.json(data, { status }))
 const clean = (docs) => docs.map(({ _id, ...rest }) => rest)
 const now = () => new Date().toISOString()
+const remainingSeconds = (endsAt) => Math.max(0, Math.ceil((new Date(endsAt).getTime() - Date.now()) / 1000))
+const timeRemaining = (endsAt) => {
+  const seconds = remainingSeconds(endsAt)
+  const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60), s = seconds % 60
+  return h ? [h, m, s].map(x => String(x).padStart(2, '0')).join(':') : [m, s].map(x => String(x).padStart(2, '0')).join(':')
+}
+const withAuctionClock = (doc) => doc ? { ...doc, time_remaining: doc.ends_at ? timeRemaining(doc.ends_at) : doc.time_remaining } : doc
+const durationSeconds = (value) => {
+  const parts = String(value || '').split(':').map(Number)
+  if (parts.some(x => !Number.isFinite(x))) return 0
+  return parts.length === 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : (parts[0] || 0) * 60 + (parts[1] || 0)
+}
 
 // ---------------------------------------------------------------------------
 // Emergent managed Google sign-in
@@ -106,12 +122,12 @@ async function applySideEffects(database, order, target) {
     await lotsC.updateOne({ id: order.lot_id }, { $set: { status: 'Allocated', allocated_qty: order.quantity, buyer_allocation: order.buyer, updated_at: now() } })
   }
   if (target === 'OUTBOUND_DISPATCHED') {
-    await shipsC.updateOne({ id: order.outbound_shipment_id }, { $set: { status: 'Dispatched', updated_at: now() } })
+    await shipsC.updateOne({ id: order.outbound_shipment_id }, { $set: { status: 'Dispatched', progress: 0.08, eta_at: new Date(Date.now() + 3 * 3600 * 1000).toISOString(), updated_at: now() } })
     await lotsC.updateOne({ id: order.lot_id }, { $set: { status: 'Dispatched', updated_at: now() } })
     await pushNotif('BUYER', `Shipment for ${order.order_no} dispatched from hub`)
   }
   if (target === 'DELIVERED') {
-    await shipsC.updateOne({ id: order.outbound_shipment_id }, { $set: { status: 'Delivered', pod: true, updated_at: now() } })
+    await shipsC.updateOne({ id: order.outbound_shipment_id }, { $set: { status: 'Delivered', pod: true, progress: 1, eta_at: now(), updated_at: now() } })
   }
   if (target === 'ACCEPTED' || target === 'SETTLEMENT_PENDING') {
     await settleC.updateOne({ id: order.settlement_id }, { $set: { status: 'Approved', updated_at: now() } })
@@ -265,6 +281,7 @@ async function seed(database) {
       pool_no: pools[i].pool_no, material: pools[i].material,
       quantity: pools[i].target_qty, hub: warehouses[i % 3].code, cluster: pools[i].cluster,
       status: ['Live', 'Scheduled', 'Live'][i],
+      ends_at: new Date(Date.now() + [272, 86400, 70][i] * 1000).toISOString(),
       time_remaining: ['04:32', '—', '01:10'][i],
       current_bid: startBid - 6, your_bid: startBid - 6, your_rank: 2,
       decrement: 1,
@@ -336,6 +353,12 @@ async function seed(database) {
       vehicle: `KA05 CX${4321 + i}`, driver: 'Suresh M', driver_phone: '99000 11111',
       status: stateIdx >= ORDER_FLOW.indexOf('DELIVERED') ? 'Delivered' : (stateIdx >= ORDER_FLOW.indexOf('OUTBOUND_DISPATCHED') ? 'Dispatched' : 'Planning'),
       eta: '17:00', pod: stateIdx >= ORDER_FLOW.indexOf('DELIVERED'),
+      buyer_cluster: b.cluster,
+      from_coordinates: wh.code === 'WH01' ? [13.0287, 77.5199] : wh.code === 'WH02' ? [12.8060, 77.6990] : [19.2967, 73.0631],
+      to_coordinates: b.cluster === 'Peenya, Bengaluru' ? [13.0287, 77.5199] : b.cluster === 'Bommasandra, Bengaluru' ? [12.8060, 77.6990] : b.cluster === 'Bhiwandi, Maharashtra' ? [19.2967, 73.0631] : b.cluster === 'Chakan, Pune' ? [18.7606, 73.8637] : [22.9880, 72.3820],
+      distance_km: [18, 31, 22, 47, 36][i % 5],
+      progress: stateIdx >= ORDER_FLOW.indexOf('DELIVERED') ? 1 : (stateIdx >= ORDER_FLOW.indexOf('OUTBOUND_DISPATCHED') ? 0.55 : 0),
+      eta_at: stateIdx >= ORDER_FLOW.indexOf('DELIVERED') ? now() : new Date(Date.now() + (90 + i * 8) * 60000).toISOString(),
       created_at: now(), updated_at: now(),
     })
 
@@ -429,6 +452,40 @@ async function handleRoute(request, { params }) {
   const method = request.method
 
   try {
+    // Gemini stays server-side: the browser never receives the API key.
+    if (route === '/ai/material-suggestions' && method === 'POST') {
+      const apiKey = process.env.GEMINI_API_KEY
+      if (!apiKey) return json({ error: 'AI suggestions are not configured. Add GEMINI_API_KEY to .env.local.' }, 503)
+      const body = await request.json().catch(() => ({}))
+      const material = String(body.material || '').slice(0, 120)
+      const application = String(body.application || '').slice(0, 1200)
+      if (!material || !application) return json({ error: 'Material and application are required for AI suggestions.' }, 400)
+      const context = { material, grade: String(body.grade || '').slice(0, 120), application, brand: String(body.brand || '').slice(0, 120), quantity: String(body.quantity || '').slice(0, 40), unit: String(body.unit || '').slice(0, 40), specification: String(body.specification || '').slice(0, 300), certification: String(body.certification || '').slice(0, 120), packaging: String(body.packaging || '').slice(0, 120) }
+      const prompt = `You are a procurement assistant for Indian MSMEs. Recommend a material grade and a concise, practical procurement specification. Do not make safety, regulatory, or food-contact compliance claims without telling the buyer to verify them with the supplier and applicable standards. Return only valid JSON with these string keys: recommended_material, recommended_grade, specification, certification, packaging, rationale, caution. Buyer context: ${JSON.stringify(context)}`
+      const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash'
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2, responseMimeType: 'application/json' } }),
+      })
+      if (!response.ok) {
+        const detail = await response.text()
+        console.error('Gemini material suggestion error:', response.status, detail)
+        return json({ error: 'AI suggestions are temporarily unavailable.' }, 502)
+      }
+      const payload = await response.json()
+      const text = payload?.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('') || ''
+      let suggestion
+      try { suggestion = JSON.parse(text.replace(/^```json\s*|\s*```$/g, '')) } catch { return json({ error: 'AI returned an unreadable recommendation. Please try again.' }, 502) }
+      return json({
+        recommended_material: String(suggestion.recommended_material || material).slice(0, 120),
+        recommended_grade: String(suggestion.recommended_grade || context.grade).slice(0, 120),
+        specification: String(suggestion.specification || '').slice(0, 300),
+        certification: String(suggestion.certification || '').slice(0, 120),
+        packaging: String(suggestion.packaging || '').slice(0, 120),
+        rationale: String(suggestion.rationale || 'Review the supplier technical data sheet before issuing a purchase order.').slice(0, 700),
+        caution: String(suggestion.caution || 'Confirm final specifications, certifications, and suitability with the supplier.').slice(0, 500),
+      })
+    }
     const database = await connectToMongo()
 
     if (route === '/' && method === 'GET') return json({ message: 'ClusterBuy API' })
@@ -498,7 +555,8 @@ async function handleRoute(request, { params }) {
         if (k === 'type' || k === 'direction' || k === 'status' || k === 'role' || k === 'warehouse') q[k] = v
       }
       const docs = await database.collection(listMap[route]).find(q).limit(500).toArray()
-      return json(clean(docs))
+      const result = clean(docs)
+      return json(route === '/auctions' ? result.map(withAuctionClock) : result)
     }
 
     // buyers / sellers via companies
@@ -517,8 +575,11 @@ async function handleRoute(request, { params }) {
     // ---- SAVINGS (real, derived from a buyer's actual orders + pool ratios) ----
     if (route === '/savings' && method === 'GET') {
       const url = new URL(request.url)
-      const buyer = url.searchParams.get('buyer')
-      const q = buyer ? { buyer } : {}
+      const user = await getSessionUser(request, database)
+      let buyerId = url.searchParams.get('buyer_id') || url.searchParams.get('company_id') || user?.company_id
+      if (!buyerId) buyerId = (await database.collection('companies').findOne({ type: 'BUYER', name: 'Apex Plastics Pvt. Ltd.' }))?.id
+      if (!buyerId) return json({ error: 'Buyer identity could not be resolved' }, 400)
+      const q = { buyer_id: buyerId }
       const orders = await database.collection('orders').find(q).toArray()
       const pools = await database.collection('pools').find({}).toArray()
       const ratioFor = (material) => {
@@ -546,6 +607,7 @@ async function handleRoute(request, { params }) {
       return json({
         rows,
         totals: { alone: totalAlone, pooled: totalPooled, saved: totalSaved, pct: totalAlone ? Math.round((totalSaved / totalAlone) * 100) : 0 },
+        buyer_id: buyerId,
         drivers: [['Volume discount', 62], ['Shared freight', 22], ['Lower platform fee', 9], ['Faster payment terms', 7]],
       })
     }
@@ -577,12 +639,18 @@ async function handleRoute(request, { params }) {
     if (path[0] === 'auctions' && path[1] && !path[2] && method === 'GET') {
       const doc = await database.collection('auctions').findOne({ id: path[1] })
       if (!doc) return json({ error: 'not found' }, 404)
-      return json((({ _id, ...r }) => r)(doc))
+      return json(withAuctionClock((({ _id, ...r }) => r)(doc)))
     }
     if (path[0] === 'shipments' && path[1] && method === 'GET') {
       const doc = await database.collection('shipments').findOne({ id: path[1] })
       if (!doc) return json({ error: 'not found' }, 404)
-      return json((({ _id, ...r }) => r)(doc))
+      // An inbound receipt is only useful when the operator can verify the
+      // linked order, lot, and inspection in the same view.
+      const order = doc.order_id ? await database.collection('orders').findOne({ id: doc.order_id }) : null
+      const lot = order?.lot_id ? await database.collection('inventory_lots').findOne({ id: order.lot_id }) : null
+      const inspection = order?.inspection_id ? await database.collection('inspections').findOne({ id: order.inspection_id }) : null
+      const clean = ({ _id, ...r }) => r
+      return json({ ...clean(doc), order: order ? clean(order) : null, lot: lot ? clean(lot) : null, inspection: inspection ? clean(inspection) : null })
     }
     if (path[0] === 'warehouses' && path[1] && method === 'GET') {
       const doc = await database.collection('warehouses').findOne({ code: path[1] })
@@ -611,12 +679,26 @@ async function handleRoute(request, { params }) {
       const body = await request.json()
       const auction = await database.collection('auctions').findOne({ id: path[1] })
       if (!auction) return json({ error: 'not found' }, 404)
+      const bid = Number(body.bid)
+      if (!Number.isFinite(bid) || bid <= 0) return json({ error: 'Bid must be a positive number' }, 400)
+      if (auction.status !== 'Live') return json({ error: 'Auction is not live' }, 409)
+      const acceptedAt = new Date()
+      const deadline = auction.ends_at ? new Date(auction.ends_at) : new Date(acceptedAt.getTime() + durationSeconds(auction.time_remaining) * 1000)
+      if (!Number.isFinite(deadline.getTime()) || deadline <= acceptedAt) return json({ error: 'Auction has closed' }, 409)
+      const decrement = Number(auction.decrement) || 1
+      if (bid > Number(auction.current_bid) - decrement) return json({ error: `Bid must be at least ${decrement} below the current bid` }, 400)
+      const extended = deadline.getTime() - acceptedAt.getTime() <= 120000
+      const endsAt = extended ? new Date(acceptedAt.getTime() + 120000).toISOString() : deadline.toISOString()
       const t = new Date().toTimeString().slice(0, 5)
       const prev = auction.your_bid
-      const bids = [{ time: t, bid: body.bid, change: prev ? `${body.bid - prev}` : '—', rank: 1 }, ...(auction.bids || [])]
-      await database.collection('auctions').updateOne({ id: path[1] }, { $set: { your_bid: body.bid, current_bid: body.bid, your_rank: 1, bids, updated_at: now() } })
+      const bids = [{ time: t, bid, change: prev ? `${bid - prev}` : '—', rank: 1 }, ...(auction.bids || [])]
+      const result = await database.collection('auctions').updateOne(
+        { id: path[1], status: 'Live', current_bid: auction.current_bid, $or: [{ ends_at: auction.ends_at }, { ends_at: { $exists: false } }] },
+        { $set: { your_bid: bid, current_bid: bid, your_rank: 1, bids, ends_at: endsAt, updated_at: acceptedAt.toISOString() } }
+      )
+      if (!result.modifiedCount) return json({ error: 'Bid changed; refresh and try again' }, 409)
       const doc = await database.collection('auctions').findOne({ id: path[1] })
-      return json((({ _id, ...r }) => r)(doc))
+      return json({ ...withAuctionClock((({ _id, ...r }) => r)(doc)), extension: { extended, seconds: extended ? 120 : 0, message: extended ? 'Extended by 2:00' : null } })
     }
 
     // ---- ADVANCE order (state machine + side-effects) ----
@@ -640,10 +722,15 @@ async function handleRoute(request, { params }) {
       const body = await request.json().catch(() => ({}))
       const order = await database.collection('orders').findOne({ inbound_shipment_id: path[1] })
       if (!order) return json({ error: 'not found' }, 404)
+      const receivedQty = Number(body.received_qty)
+      if (!Number.isFinite(receivedQty) || receivedQty < 0) return json({ error: 'Received quantity must be a valid non-negative number' }, 400)
+      const receivedAt = now()
       const timeline = ORDER_FLOW.slice(0, ORDER_FLOW.indexOf('HUB_RECEIVED') + 1).map(st => ({ step: st, done: true, at: now() }))
-      await database.collection('orders').updateOne({ id: order.id }, { $set: { state: 'QC_PENDING', timeline, updated_at: now() } })
+      await database.collection('orders').updateOne({ id: order.id }, { $set: { state: 'QC_PENDING', timeline, updated_at: receivedAt } })
       await applySideEffects(database, { ...order, state: 'HUB_RECEIVED' }, 'HUB_RECEIVED')
-      return json({ ok: true, received_qty: body.received_qty || order.quantity })
+      await database.collection('shipments').updateOne({ id: path[1] }, { $set: { received_qty: receivedQty, received_at: receivedAt, status: 'Delivered', updated_at: receivedAt } })
+      await database.collection('inventory_lots').updateOne({ id: order.lot_id }, { $set: { received_qty: receivedQty, received_time: receivedAt, updated_at: receivedAt } })
+      return json({ ok: true, received_qty: receivedQty, received_at: receivedAt })
     }
 
     // ---- QC decision ----

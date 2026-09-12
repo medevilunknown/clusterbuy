@@ -59,15 +59,14 @@ const MATERIAL_INFO = {
   'ABS': { blurb: 'ABS is a tough engineering thermoplastic with good impact resistance and surface finish, used for enclosures and automotive trims.', grades: ['General', 'Plating'], related: ['PP (Polypropylene)', 'PVC'], applications: ['Enclosures', 'Automotive trim', 'Appliances'], savings: '12 – 26%' },
 }
 const DEFAULT_INFO = { blurb: 'Tell us your requirement and we will pool it with similar demand from nearby MSMEs to unlock better supplier pricing.', grades: ['Standard'], related: [], applications: ['General'], savings: '10 – 25%' }
+const MATERIAL_SPECS = {
+  'PP (Polypropylene)': { standards: ['ISO 1873', 'ASTM D1238'], properties: [['Melt flow index', '8–20 g/10 min'], ['Density', '0.90–0.91 g/cm³'], ['Tensile strength', '30–38 MPa'], ['Moisture', '≤ 0.05%']], note: 'Ask the supplier for a lot-specific certificate of analysis (COA) before approval.' },
+  HDPE: { standards: ['ISO 17855', 'ASTM D1238'], properties: [['Melt flow index', '0.2–20 g/10 min'], ['Density', '0.94–0.97 g/cm³'], ['Tensile strength', '20–32 MPa'], ['Moisture', '≤ 0.05%']], note: 'Confirm the grade is suitable for the intended blow, injection, or pipe process.' },
+  LDPE: { standards: ['ISO 17855', 'ASTM D1238'], properties: [['Melt flow index', '0.3–20 g/10 min'], ['Density', '0.91–0.93 g/cm³'], ['Tensile strength', '8–15 MPa'], ['Moisture', '≤ 0.05%']], note: 'Validate film grade, slip/additive requirements, and sealing performance with a trial lot.' },
+  'PET Resin': { standards: ['ISO 15378', 'ASTM D4603'], properties: [['Intrinsic viscosity', '0.76–0.84 dL/g'], ['Moisture', '≤ 0.005%'], ['Acetaldehyde', '≤ 1 ppm'], ['Colour', 'As per COA']], note: 'Drying conditions and food-contact compliance should be agreed before ordering.' },
+  ABS: { standards: ['ISO 2580', 'ASTM D1238'], properties: [['Melt flow index', '10–30 g/10 min'], ['Impact strength', 'As per grade COA'], ['Tensile strength', '35–50 MPa'], ['Moisture', '≤ 0.1%']], note: 'Specify flame-retardant, UV, and colour requirements where applicable.' },
+}
 const POOL_PEERS = ['AP', 'BC', 'GP', 'VP', 'MA']
-
-// ---- Savings story data (before / after pooling) ----
-const SAVINGS_ROWS = [
-  { material: 'PP Grade X', qty: 5, alone: 92, pooled: 79, unit: 'kg' },
-  { material: 'HDPE Blow', qty: 8, alone: 88, pooled: 77, unit: 'kg' },
-  { material: 'LDPE Film', qty: 6, alone: 95, pooled: 84, unit: 'kg' },
-  { material: 'PET Resin', qty: 4, alone: 101, pooled: 90, unit: 'kg' },
-]
 
 export default function BuyerApp({ user, onLogout, roleSwitcher }) {
   const [view, setView] = useState('overview')
@@ -76,16 +75,16 @@ export default function BuyerApp({ user, onLogout, roleSwitcher }) {
   const go = (v) => { setSel(null); setView(v) }
 
   return (
-    <div className="flex h-screen bg-[#E6EDF3]/40">
+    <div data-testid="buyer-dashboard" className="flex h-screen bg-[#E6EDF3]/40">
       <Sidebar items={NAV} active={view} onNav={go} dark={false} footer="Indian MSMEs · Stronger together" />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar title="Your procurement" subtitle="Track your demands, pools and orders in one place." user={user} onLogout={onLogout} roleSwitcher={roleSwitcher} onNavigate={go}
           right={<button onClick={() => go('new')} className="flex items-center gap-1.5 rounded-lg bg-[#007F78] px-3.5 py-2 text-[13px] font-semibold text-white hover:brightness-110"><Plus className="h-4 w-4" /> New demand</button>} />
         <main className="flex-1 overflow-y-auto p-6">
-          {view === 'overview' && <Overview go={go} openOrder={(id) => { setSel({ type: 'order', id }); setView('orderDetail') }} />}
+          {view === 'overview' && <Overview user={user} go={go} openOrder={(id) => { setSel({ type: 'order', id }); setView('orderDetail') }} />}
           {view === 'new' && <NewDemand onDone={() => go('demands')} back={() => go('demands')} />}
           {view === 'demands' && <Demands go={go} />}
-          {view === 'savings' && <SavingsStory />}
+          {view === 'savings' && <SavingsStory user={user} />}
           {view === 'pools' && <Pools open={(id) => { setSel({ type: 'pool', id }); setView('poolDetail') }} />}
           {view === 'poolDetail' && <PoolDetail id={sel?.id} back={() => go('pools')} openQuotes={(id) => { setSel({ type: 'pool', id }); setView('quotes') }} />}
           {view === 'quotes' && <Quotes poolId={sel?.id} />}
@@ -107,13 +106,15 @@ export default function BuyerApp({ user, onLogout, roleSwitcher }) {
   )
 }
 
-function Overview({ go, openOrder }) {
+function Overview({ user, go, openOrder }) {
   const [demands, setDemands] = useState([])
   const [pools, setPools] = useState([])
+  const [savings, setSavings] = useState(null)
   useEffect(() => {
     api('/demands').then(setDemands).catch(() => {})
     api('/pools').then(setPools).catch(() => {})
-  }, [])
+    api(`/savings${user?.company_id ? `?buyer_id=${encodeURIComponent(user.company_id)}` : ''}`).then(setSavings).catch(() => {})
+  }, [user?.company_id])
   const pool = pools[0]
   return (
     <div className="space-y-6">
@@ -124,7 +125,7 @@ function Overview({ go, openOrder }) {
         <KpiCard label="Orders in progress" value={demands.filter(d => ['Order confirmed', 'In transit', 'At warehouse'].includes(d.status)).length} icon={Package} onClick={() => go('orders')} />
         <KpiCard label="Goods ready" value={1} sub="for pickup" icon={Truck} accent="#142D4E" />
         <KpiCard label="Monthly spend" value={inrShort(4350000)} icon={CreditCard} accent="#F59E0B" />
-        <KpiCard label="Est. savings" value={inrShort(612000)} sub="through pooling" icon={CheckCircle2} />
+        <KpiCard label="Est. savings" value={inrShort(savings?.totals?.saved || 0)} sub="from actual orders" icon={CheckCircle2} onClick={() => go('savings')} />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -195,8 +196,34 @@ function NewDemand({ onDone, back }) {
     payment_terms: '30 days', gst: 'GST invoice required',
   })
   const [done, setDone] = useState(null)
+  const [specSheetOpen, setSpecSheetOpen] = useState(false)
+  const [aiSuggestion, setAiSuggestion] = useState(null)
+  const [aiLoading, setAiLoading] = useState(false)
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }))
   const info = MATERIAL_INFO[f.material] || DEFAULT_INFO
+  const specSheet = MATERIAL_SPECS[f.material] || { standards: ['Supplier technical data sheet'], properties: [['Grade', f.grade || 'Confirm with supplier'], ['Specification', 'Confirm with supplier'], ['Quality document', 'COA required']], note: 'Use the supplier technical data sheet and a pre-dispatch COA to finalize requirements.' }
+
+  const getAiSuggestions = async () => {
+    if (!f.application.trim()) return toast.error('Add your application or use case first')
+    setAiLoading(true)
+    try {
+      const suggestion = await api('/ai/material-suggestions', { method: 'POST', body: JSON.stringify({ material: f.material, grade: f.grade, application: f.application, brand: f.brand, quantity: f.quantity, unit: f.unit, specification: f.spec, certification: f.cert, packaging: f.packaging }) })
+      setAiSuggestion(suggestion)
+      toast.success('AI recommendation is ready')
+    } catch (e) {
+      toast.error(e.message || 'Could not generate a suggestion')
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
+  const applyAiSuggestion = () => {
+    if (!aiSuggestion) return
+    const nextGrade = info.grades.includes(aiSuggestion.recommended_grade) ? aiSuggestion.recommended_grade : f.grade
+    setF((s) => ({ ...s, grade: nextGrade, spec: aiSuggestion.specification || s.spec, cert: aiSuggestion.certification || s.cert, packaging: aiSuggestion.packaging || s.packaging }))
+    setStep(2)
+    toast.success('Recommendation applied to specifications')
+  }
 
   const submit = async () => {
     try {
@@ -272,7 +299,7 @@ function NewDemand({ onDone, back }) {
                 <div className="min-w-0 flex-1">
                   <div className="text-[14px] font-bold text-[#142D4E]">About {f.material} {f.grade}</div>
                   <p className="mt-1 text-[12.5px] leading-relaxed text-slate-500">{info.blurb}</p>
-                  <button onClick={() => toast('Material spec sheet opened')} className="mt-2 text-[12.5px] font-semibold text-[#007F78]">View material specs →</button>
+                  <button type="button" onClick={() => setSpecSheetOpen(true)} className="mt-2 text-[12.5px] font-semibold text-[#007F78]">View material specs →</button>
                 </div>
                 <div className="hidden h-20 w-28 flex-shrink-0 place-items-center rounded-lg bg-gradient-to-br from-slate-200 to-slate-100 text-slate-400 sm:grid"><Boxes className="h-8 w-8" /></div>
               </div>
@@ -282,8 +309,17 @@ function NewDemand({ onDone, back }) {
                   <span className="grid h-9 w-9 place-items-center rounded-lg bg-[#007F78]/15 text-[#007F78]"><Sparkles className="h-5 w-5" /></span>
                   <div><div className="text-[13.5px] font-semibold text-[#142D4E]">Need help choosing the right material?</div><div className="text-[12px] text-slate-500">Get recommendations based on your use case.</div></div>
                 </div>
-                <button onClick={() => toast.success('AI suggested: PP Grade X for your use case')} className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-[#007F78] bg-white px-4 py-2 text-[13px] font-semibold text-[#007F78]"><Sparkles className="h-4 w-4" /> Get AI suggestions</button>
+                <button type="button" onClick={getAiSuggestions} disabled={aiLoading} className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-[#007F78] bg-white px-4 py-2 text-[13px] font-semibold text-[#007F78] disabled:cursor-wait disabled:opacity-60"><Sparkles className="h-4 w-4" /> {aiLoading ? 'Thinking…' : 'Get AI suggestions'}</button>
               </div>
+
+              {aiSuggestion && (
+                <div data-testid="ai-material-suggestion" className="rounded-xl border border-violet-200 bg-violet-50/60 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-1.5 text-[13px] font-bold text-violet-800"><Sparkles className="h-4 w-4" /> Gemini recommendation</div><div className="mt-1 text-[15px] font-semibold text-[#142D4E]">{aiSuggestion.recommended_material || f.material} · {aiSuggestion.recommended_grade || f.grade}</div></div><button type="button" onClick={applyAiSuggestion} className="rounded-lg bg-[#007F78] px-3 py-1.5 text-[12px] font-semibold text-white">Apply to demand</button></div>
+                  <p className="mt-2 text-[12.5px] leading-relaxed text-slate-600">{aiSuggestion.rationale}</p>
+                  <div className="mt-3 grid gap-2 text-[12px] sm:grid-cols-3"><div className="rounded-lg bg-white/80 p-2"><span className="block text-slate-400">Suggested spec</span><span className="font-medium text-[#142D4E]">{aiSuggestion.specification || 'Confirm with supplier'}</span></div><div className="rounded-lg bg-white/80 p-2"><span className="block text-slate-400">Certification</span><span className="font-medium text-[#142D4E]">{aiSuggestion.certification || 'COA'}</span></div><div className="rounded-lg bg-white/80 p-2"><span className="block text-slate-400">Packaging</span><span className="font-medium text-[#142D4E]">{aiSuggestion.packaging || 'Confirm with supplier'}</span></div></div>
+                  {aiSuggestion.caution && <p className="mt-2 text-[11.5px] text-amber-700">Check: {aiSuggestion.caution}</p>}
+                </div>
+              )}
 
               <div className="grid gap-3 md:grid-cols-3">
                 <div className="rounded-xl border border-slate-200 p-3.5">
@@ -424,24 +460,34 @@ function NewDemand({ onDone, back }) {
           </Panel>
         </aside>
       </div>
+
+      {specSheetOpen && (
+        <div data-testid="material-spec-sheet" role="dialog" aria-modal="true" aria-labelledby="material-spec-sheet-title" className="fixed inset-0 z-50 grid place-items-center bg-slate-950/35 p-4" onMouseDown={() => setSpecSheetOpen(false)}>
+          <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-4"><div><div className="text-[11px] font-bold uppercase tracking-wider text-[#007F78]">Reference sheet</div><h2 id="material-spec-sheet-title" className="mt-1 text-[20px] font-bold text-[#142D4E]">{f.material} {f.grade} specifications</h2><p className="mt-1 text-[12.5px] text-slate-500">Typical procurement parameters — validate final values against the supplier COA.</p></div><button type="button" onClick={() => setSpecSheetOpen(false)} aria-label="Close material specs" className="rounded-lg border border-slate-200 px-3 py-1.5 text-[12px] font-semibold text-slate-600">Close</button></div>
+            <div className="mt-5 overflow-hidden rounded-xl border border-slate-200"><div className="grid grid-cols-2 bg-slate-50 px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-400"><span>Parameter</span><span>Typical value</span></div>{specSheet.properties.map(([name, value]) => <div key={name} className="grid grid-cols-2 border-t border-slate-100 px-4 py-3 text-[13px]"><span className="text-slate-500">{name}</span><span className="font-semibold text-[#142D4E]">{value}</span></div>)}</div>
+            <div className="mt-4"><div className="text-[12px] font-semibold text-slate-500">Reference standards</div><div className="mt-1.5 flex flex-wrap gap-1.5">{specSheet.standards.map((standard) => <span key={standard} className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600">{standard}</span>)}</div></div>
+            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[12px] leading-relaxed text-amber-800">{specSheet.note}</div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 // ---- Savings Story: before/after pooling vs buying alone ----
-function SavingsStory() {
-  const [orders, setOrders] = useState([])
-  useEffect(() => { api('/orders').then(setOrders).catch(() => {}) }, [])
-  const rows = SAVINGS_ROWS.map((r) => {
-    const kg = r.qty * 1000
-    const aloneTotal = r.alone * kg, pooledTotal = r.pooled * kg
-    return { ...r, kg, aloneTotal, pooledTotal, saved: aloneTotal - pooledTotal, pct: Math.round(((r.alone - r.pooled) / r.alone) * 100) }
-  })
-  const totalAlone = rows.reduce((a, r) => a + r.aloneTotal, 0)
-  const totalPooled = rows.reduce((a, r) => a + r.pooledTotal, 0)
-  const totalSaved = totalAlone - totalPooled
-  const avgPct = Math.round((totalSaved / totalAlone) * 100)
-  const chartData = rows.map((r) => ({ name: r.material.split(' ')[0], alone: Math.round(r.aloneTotal / 1000), pooled: Math.round(r.pooledTotal / 1000) }))
+function SavingsStory({ user }) {
+  const [data, setData] = useState(null)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    setError(''); setData(null)
+    api(`/savings${user?.company_id ? `?buyer_id=${encodeURIComponent(user.company_id)}` : ''}`).then(setData).catch(e => setError(e.message))
+  }, [user?.company_id])
+  if (error) return <Panel title="Savings unavailable"><div role="alert" className="text-sm text-red-600">{error}. Please try again.</div></Panel>
+  if (!data) return <Panel title="Your savings story"><div className="animate-pulse text-sm text-slate-400">Calculating from your orders…</div></Panel>
+  const rows = data.rows || []
+  const { alone: totalAlone = 0, pooled: totalPooled = 0, saved: totalSaved = 0, pct: avgPct = 0 } = data.totals || {}
+  const chartData = rows.map((r) => ({ name: r.material.split(' ')[0], alone: Math.round(r.alone_total / 1000), pooled: Math.round(r.pooled_total / 1000) }))
 
   return (
     <div className="space-y-6">
@@ -471,7 +517,7 @@ function SavingsStory() {
         </Panel>
         <Panel title="Savings breakdown" subtitle="What drives your savings">
           <div className="space-y-3.5">
-            {[['Volume discount', 62], ['Shared freight', 22], ['Lower platform fee', 9], ['Faster payment terms', 7]].map(([l, v]) => (
+            {(data.drivers || []).map(([l, v]) => (
               <div key={l}>
                 <div className="mb-1 flex justify-between text-[12.5px]"><span className="text-slate-500">{l}</span><span className="font-semibold text-[#142D4E]">{v}%</span></div>
                 <Fill pct={v} />
@@ -482,14 +528,16 @@ function SavingsStory() {
       </div>
 
       <Panel title="Line-by-line savings" noPad>
+        {!rows.length ? <div className="px-5 py-10 text-center text-sm text-slate-500">No completed or active orders are available for this buyer yet.</div> :
         <DataTable rows={rows} columns={[
+          { header: 'Order', cell: (r) => <span className="font-mono text-xs font-semibold text-[#142D4E]">{r.order_no}</span> },
           { header: 'Material', cell: (r) => <span className="font-semibold text-[#142D4E]">{r.material}</span> },
           { header: 'Qty', cell: (r) => `${r.qty} t` },
-          { header: 'Alone (/kg)', cell: (r) => <span className="text-slate-400 line-through">{inr(r.alone)}</span>, right: true },
-          { header: 'Pooled (/kg)', cell: (r) => <span className="font-semibold text-[#142D4E]">{inr(r.pooled)}</span>, right: true },
+          { header: 'Est. alone (/kg)', cell: (r) => <span className="text-slate-400 line-through">{inr(r.alone_per_kg)}</span>, right: true },
+          { header: 'Actual paid (/kg)', cell: (r) => <span className="font-semibold text-[#142D4E]">{inr(r.pooled_per_kg)}</span>, right: true },
           { header: 'You saved', cell: (r) => <span className="font-bold text-[#007F78]">{inrShort(r.saved)}</span>, right: true },
           { header: '%', cell: (r) => <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] font-bold text-emerald-700">{r.pct}%</span>, right: true },
-        ]} />
+        ]} />}
       </Panel>
     </div>
   )
@@ -676,7 +724,7 @@ function Shipments() {
       {sel && (
         <div className="grid gap-4 lg:grid-cols-3">
           <Panel className="lg:col-span-2" title={`Live tracking — ${sel.shipment_no}`} subtitle={`${sel.from} → ${sel.to}`}>
-            <LiveMap fromKey={sel.from} toKey={sel.buyer_cluster || sel.to} progress={progress} live={live} height={300} />
+            <LiveMap fromKey={sel.from} toKey={sel.buyer_cluster || sel.to} fromCoordinates={sel.from_coordinates} toCoordinates={sel.to_coordinates} distanceKm={sel.distance_km} etaAt={sel.eta_at} progress={sel.progress ?? progress} live={live} delivered={sel.status === 'Delivered'} height={300} />
           </Panel>
           <Panel title="Shipment details">
             <div className="space-y-2.5 text-[13px]">

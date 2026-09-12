@@ -62,6 +62,10 @@ chainlit.md
 
 # Deployment
 .vercel
+supabase/.temp/
+
+# Browser-test artifacts
+test-results/
 
 # Data and databases
 agenthub/agents/youtube/db

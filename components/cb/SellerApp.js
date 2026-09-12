@@ -33,7 +33,7 @@ export default function SellerApp({ user, onLogout, roleSwitcher }) {
   const [sel, setSel] = useState(null)
   const go = (v) => { setSel(null); setView(v) }
   return (
-    <div className="flex h-screen bg-[#E6EDF3]/40">
+    <div data-testid="seller-dashboard" className="flex h-screen bg-[#E6EDF3]/40">
       <Sidebar items={NAV} active={view} onNav={go} dark footer="Shakti Polymers · Supplier" />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar title="Supplier workspace" subtitle="What can you supply, at what price, and when do you get paid?" user={user} onLogout={onLogout} roleSwitcher={roleSwitcher} onNavigate={go} />
@@ -156,7 +156,7 @@ const parseHMS = (s) => { if (!s || s === '—') return 0; const p = s.split(':'
 function Auctions({ open }) {
   const [rows, setRows] = useState([])
   const [, force] = useState(0)
-  useEffect(() => { api('/auctions').then((r) => setRows(r.map((a) => ({ ...a, _endsAt: Date.now() + parseHMS(a.time_remaining) * 1000 })))).catch(() => {}) }, [])
+  useEffect(() => { api('/auctions').then((r) => setRows(r.map((a) => ({ ...a, _endsAt: a.ends_at ? new Date(a.ends_at).getTime() : Date.now() + parseHMS(a.time_remaining) * 1000 })))).catch(() => {}) }, [])
   return (
     <Panel title="Auctions" noPad>
       <DataTable rows={rows} onRow={r => open(r.id)} columns={[
@@ -177,7 +177,7 @@ function LiveAuction({ id, back }) {
   const load = () => api(`/auctions/${id}`).then(x => {
     setA(x); setBid(String(x.current_bid - 1))
     const secs = parseHMS(x.time_remaining)
-    setEndsAt(Date.now() + (secs > 0 ? secs : 0) * 1000)
+    setEndsAt(x.ends_at ? new Date(x.ends_at).getTime() : Date.now() + (secs > 0 ? secs : 0) * 1000)
     setClosed(x.status !== 'Live' && x.status !== 'Scheduled' ? true : secs <= 0 && x.status === 'Live')
   }).catch(() => {})
   useEffect(() => { if (id) load() }, [id])
@@ -186,12 +186,13 @@ function LiveAuction({ id, back }) {
   const place = async () => {
     if (closed) return toast.error('Auction has closed')
     const v = Number(bid); if (!v) return
-    try { const u = await api(`/auctions/${a.id}/bid`, { method: 'POST', body: JSON.stringify({ bid: v }) }); setA(u); toast.success(`Bid placed at ${inr(v)}/kg — you are now rank #1`) } catch (e) { toast.error(e.message) }
+    try { const u = await api(`/auctions/${a.id}/bid`, { method: 'POST', body: JSON.stringify({ bid: v }) }); setA(u); setEndsAt(new Date(u.ends_at).getTime()); toast.success(u.extension?.extended ? 'Bid accepted · Extended by 2:00' : `Bid placed at ${inr(v)}/kg — you are now rank #1`) } catch (e) { toast.error(e.message) }
   }
   return (
     <div className="space-y-4">
       <button onClick={back} className="flex items-center gap-1 text-[13px] font-semibold text-[#007F78]"><ArrowLeft className="h-4 w-4" /> Back to auctions</button>
       <div className={`rounded-xl border p-6 text-white transition ${closed ? 'border-slate-300 bg-slate-600' : 'border-slate-200 bg-[#142D4E]'}`}>
+        {a.extension?.extended && <div data-testid="auction-extension" className="mb-4 inline-flex rounded-md bg-amber-400/20 px-2.5 py-1 text-xs font-bold text-amber-200">Extended by 2:00</div>}
         <div className="flex items-center justify-between">
           <div><div className="text-[24px] font-bold">{a.material} · {a.quantity} tonnes</div><div className="text-[13px] text-white/60">{a.cluster} · Hub {a.hub}</div></div>
           <StatusBadge status={closed ? 'Cancelled' : a.status} />

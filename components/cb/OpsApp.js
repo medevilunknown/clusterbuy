@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { api, inr } from '@/lib/cb/api'
-import { Sidebar, TopBar, KpiCard, Panel, DataTable, StatusBadge, Fill } from '@/components/cb/shared'
+import { Sidebar, TopBar, KpiCard, Panel, DataTable, StatusBadge, Fill, Timeline } from '@/components/cb/shared'
 import { CompanySettings, ProfilePage } from '@/components/cb/settings'
 import { SimpleList, Stub } from '@/components/cb/BuyerApp'
 import {
@@ -37,7 +37,7 @@ export default function OpsApp({ user, onLogout, roleSwitcher }) {
   const [wh, setWh] = useState('WH01')
   const go = (v) => { setSel(null); setView(v) }
   return (
-    <div className="flex h-screen bg-[#E6EDF3]/40">
+    <div data-testid="ops-dashboard" className="flex h-screen bg-[#E6EDF3]/40">
       <Sidebar items={NAV} active={view} onNav={go} dark footer="Peenya Hub · Operator" />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar title="Operations overview" subtitle="What is arriving, where does it go, has it passed QC, where is it delivered?" user={user} onLogout={onLogout} roleSwitcher={roleSwitcher} onNavigate={go}
@@ -45,7 +45,7 @@ export default function OpsApp({ user, onLogout, roleSwitcher }) {
         <main className="flex-1 overflow-y-auto p-6">
           {view === 'overview' && <Overview wh={wh} go={go} openInbound={(id) => { setSel(id); setView('inboundDetail') }} />}
           {view === 'inbound' && <Inbound open={(id) => { setSel(id); setView('inboundDetail') }} />}
-          {view === 'inboundDetail' && <InboundDetail id={sel} back={() => go('inbound')} />}
+          {view === 'inboundDetail' && <InboundDetail id={sel} back={() => go('inbound')} openQuality={(lotId) => { setSel(lotId); setView('qualityDetail') }} />}
           {view === 'receiving' && <Inbound open={(id) => { setSel(id); setView('inboundDetail') }} />}
           {view === 'warehouse' && <WarehouseMap wh={wh} />}
           {view === 'inventory' && <Inventory />}
@@ -165,12 +165,24 @@ function Inbound({ open }) {
   )
 }
 
-function InboundDetail({ id, back }) {
+function InboundDetail({ id, back, openQuality }) {
   const [s, setS] = useState(null); const [received, setReceived] = useState('')
-  const load = () => api(`/shipments/${id}`).then(x => { setS(x); setReceived(String(x.quantity)) }).catch(() => {})
+  const load = () => api(`/shipments/${id}`).then(x => {
+    setS(x)
+    setReceived(String(x.received_qty ?? x.lot?.received_qty ?? x.quantity ?? ''))
+  }).catch(() => {})
   useEffect(() => { if (id) load() }, [id])
   if (!s) return <Stub title="Loading shipment..." />
-  const done = s.status === 'Delivered'
+  const lot = s.lot
+  const order = s.order
+  const inspection = s.inspection
+  const recordedQty = Number(s.received_qty ?? lot?.received_qty ?? received)
+  const expectedQty = Number(s.quantity ?? order?.quantity ?? 0)
+  const discrepancy = recordedQty - expectedQty
+  const done = s.status === 'Delivered' || Boolean(s.received_at) || Boolean(lot?.received_time)
+  const receiptAt = s.received_at || lot?.received_time || s.updated_at
+  const qcComplete = inspection?.status === 'Pass' || Boolean(inspection?.decision)
+  const documentRows = order?.documents || []
   const receive = async () => {
     try { await api(`/inbound/${s.id}/receive`, { method: 'POST', body: JSON.stringify({ received_qty: Number(received) }) }); toast.success('Goods received — QC inspection task created'); load() } catch (e) { toast.error(e.message) }
   }
@@ -181,6 +193,38 @@ function InboundDetail({ id, back }) {
         <div><div className="text-[22px] font-bold text-[#142D4E]">Shipment {s.shipment_no}</div><div className="text-[13px] text-slate-400">{s.from} · {s.vehicle} · ETA {s.eta}</div></div>
         <StatusBadge status={s.status} />
       </div>
+      {done && <Panel className="border-[#007F78]/30" title="Received at hub" subtitle="Receipt recorded and linked to the inbound lot" action={<StatusBadge status={qcComplete ? 'Pass' : 'QC pending'} />}>
+        <section data-testid="hub-received-details" aria-label="Hub receipt details" className="space-y-4">
+          <div className="flex flex-wrap items-start gap-3 border-b border-slate-100 pb-4">
+            <span className="grid h-10 w-10 place-items-center rounded-lg bg-[#007F78]/10 text-[#007F78]"><PackageCheck className="h-5 w-5" /></span>
+            <div className="min-w-[180px] flex-1"><div className="text-[14px] font-bold text-[#142D4E]">Receipt complete</div><div className="mt-0.5 text-[12px] text-slate-500">{receiptAt ? `Recorded ${new Date(receiptAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}` : 'Receipt time unavailable'} · {s.to || order?.warehouse || 'Hub unavailable'}</div></div>
+            <div className="flex flex-wrap gap-x-5 gap-y-1 text-[12px] text-slate-500"><span>Inbound <b className="text-[#142D4E]">{s.shipment_no || '—'}</b></span><span>Order <b className="text-[#142D4E]">{s.order_no || order?.order_no || '—'}</b></span><span>Lot <b className="text-[#142D4E]">{lot?.lot_no || order?.lot_no || '—'}</b></span></div>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-[1.1fr_.9fr]">
+            <div className="grid grid-cols-2 gap-x-5 gap-y-3 text-[13px]">
+              <ReceiptFact label="Expected" value={`${expectedQty} t`} />
+              <ReceiptFact label="Received" value={`${recordedQty} t`} emphasis />
+              <ReceiptFact label="Warehouse" value={s.to || order?.warehouse || '—'} />
+              <ReceiptFact label="QC status" value={inspection?.status || (qcComplete ? 'Complete' : 'Pending')} />
+              {discrepancy !== 0 && <div className="col-span-2 flex items-center justify-between rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700"><span className="text-[12px] font-semibold">Quantity discrepancy</span><span className="text-[13px] font-bold">{discrepancy > 0 ? '+' : ''}{discrepancy.toFixed(1)} t</span></div>}
+            </div>
+            <div className="rounded-lg bg-slate-50 px-4 py-3">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Next action</div>
+              <div className="mt-1 text-[13px] font-semibold text-[#142D4E]">{qcComplete ? 'QC complete — review the inspection record' : 'Inspect the received lot before release'}</div>
+              {lot?.id && <button onClick={() => openQuality(lot.id)} className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-[#142D4E] px-3 py-2 text-[12px] font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#007F78] focus:ring-offset-2"><ClipboardCheck className="h-3.5 w-3.5" /> {qcComplete ? 'View QC result' : 'Open QC inspection'}</button>}
+            </div>
+          </div>
+          <div className="grid gap-4 border-t border-slate-100 pt-4 md:grid-cols-2">
+            <div><div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Receipt checklist</div><Timeline steps={[
+              { label: 'Arrival confirmed', done: true, at: receiptAt }, { label: 'Quantity captured', done: true, at: receiptAt },
+              { label: `Lot ${lot?.lot_no || 'linked' } created`, done: Boolean(lot), at: lot?.created_at || receiptAt }, { label: 'QC queued', done: Boolean(inspection), at: inspection?.updated_at || receiptAt },
+            ]} /></div>
+            <div className="space-y-2"><div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Carrier & supplier evidence</div>
+              <ReceiptFact label="Supplier" value={s.from || order?.supplier || '—'} /><ReceiptFact label="Vehicle" value={s.vehicle || '—'} /><ReceiptFact label="Driver" value={s.driver ? `${s.driver}${s.driver_phone ? ` · ${s.driver_phone}` : ''}` : '—'} />
+              {documentRows.length > 0 ? <div className="flex flex-wrap gap-1.5 pt-1">{documentRows.filter(d => ['Invoice', 'E-way bill', 'PO'].includes(d.type)).map(d => <span key={d.type} className="rounded border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600">{d.type}: <b className="text-[#142D4E]">{d.status}</b></span>)}</div> : <div className="text-[12px] text-slate-400">Supplier document status unavailable.</div>}</div>
+          </div>
+        </section>
+      </Panel>}
       <div className="grid gap-4 lg:grid-cols-2">
         <Panel title="Receiving details">
           <div className="grid grid-cols-2 gap-4">
@@ -191,19 +235,23 @@ function InboundDetail({ id, back }) {
           </div>
           {!done
             ? <button onClick={receive} className="mt-4 flex items-center gap-1.5 rounded-lg bg-[#007F78] px-5 py-2.5 text-[13px] font-semibold text-white"><PackageCheck className="h-4 w-4" /> Mark received &amp; create QC task</button>
-            : <div className="mt-4 flex items-center gap-2 rounded-lg bg-emerald-50 px-4 py-3 text-[13px] font-medium text-emerald-700"><CheckCircle2 className="h-4 w-4" /> Received. QC inspection task created for this lot.</div>}
+            : <div className="mt-4 flex items-center gap-2 rounded-lg bg-emerald-50 px-4 py-3 text-[13px] font-medium text-emerald-700"><CheckCircle2 className="h-4 w-4" /> Receipt is complete. Quantity is locked to the receipt record.</div>}
         </Panel>
         <Panel title="Discrepancy check">
           <div className="space-y-2 text-[13px]">
-            <div className="flex justify-between"><span className="text-slate-400">Expected</span><span className="font-medium">{s.quantity} t</span></div>
-            <div className="flex justify-between"><span className="text-slate-400">Received</span><span className="font-medium">{received} t</span></div>
-            <div className="flex justify-between border-t border-slate-100 pt-2"><span className="text-slate-400">Discrepancy</span><span className={`font-bold ${Number(received) < s.quantity ? 'text-red-600' : 'text-emerald-600'}`}>{(Number(received) - s.quantity).toFixed(1)} t</span></div>
+            <div className="flex justify-between"><span className="text-slate-400">Expected</span><span className="font-medium">{expectedQty} t</span></div>
+            <div className="flex justify-between"><span className="text-slate-400">Received</span><span className="font-medium">{done ? recordedQty : received} t</span></div>
+            {discrepancy !== 0 ? <div className="flex justify-between border-t border-red-100 pt-2"><span className="text-red-600">Discrepancy</span><span className="font-bold text-red-600">{discrepancy > 0 ? '+' : ''}{discrepancy.toFixed(1)} t</span></div> : <div className="flex items-center gap-1.5 border-t border-slate-100 pt-2 text-[#007F78]"><CheckCircle2 className="h-4 w-4" /> <span className="font-semibold">Quantity matched</span></div>}
           </div>
           <div className="mt-4 grid h-24 place-items-center rounded-lg border border-dashed border-slate-300 text-[12px] text-slate-400">Upload unloading photos</div>
         </Panel>
       </div>
     </div>
   )
+}
+
+function ReceiptFact({ label, value, emphasis = false }) {
+  return <div className="flex items-baseline justify-between gap-3 border-b border-slate-100 pb-1.5"><span className="text-[12px] text-slate-400">{label}</span><span className={`text-right text-[13px] ${emphasis ? 'font-bold text-[#007F78]' : 'font-medium text-[#142D4E]'}`}>{value}</span></div>
 }
 
 function WarehouseMap({ wh }) {
@@ -429,7 +477,7 @@ function Tracking() {
       <Panel className="lg:col-span-2" title={sel ? `Live tracking — ${sel.shipment_no}` : 'Delivery tracking'} subtitle={sel ? `${sel.from} → ${sel.to} · ETA ${sel.eta} · ${sel.vehicle}` : 'Select a shipment'}>
         {sel ? (
           <>
-            <LiveMap fromKey={sel.from} toKey={sel.buyer_cluster || sel.to} progress={progOf(sel)} live={sel.status === 'Dispatched'} height={340} />
+            <LiveMap fromKey={sel.from} toKey={sel.buyer_cluster || sel.to} fromCoordinates={sel.from_coordinates} toCoordinates={sel.to_coordinates} distanceKm={sel.distance_km} etaAt={sel.eta_at} progress={sel.progress ?? progOf(sel)} live={sel.status === 'Dispatched'} delivered={sel.status === 'Delivered'} height={340} />
             <div className="mt-3 grid grid-cols-3 gap-3 text-center text-[12px]">
               <div className="rounded-lg bg-slate-50 p-2.5"><div className="text-slate-400">Driver</div><div className="font-semibold text-[#142D4E]">{sel.driver}</div></div>
               <div className="rounded-lg bg-slate-50 p-2.5"><div className="text-slate-400">Vehicle</div><div className="font-semibold text-[#142D4E]">{sel.vehicle}</div></div>

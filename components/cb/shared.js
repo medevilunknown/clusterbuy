@@ -305,6 +305,8 @@ export function Countdown({ endsAt, onExpire, className, compact }) {
   const [left, setLeft] = useState(() => Math.max(0, Math.floor((endsAt - Date.now()) / 1000)))
   const firedRef = useRef(false)
   useEffect(() => {
+    firedRef.current = false
+    setLeft(Math.max(0, Math.floor((endsAt - Date.now()) / 1000)))
     const t = setInterval(() => {
       const s = Math.max(0, Math.floor((endsAt - Date.now()) / 1000))
       setLeft(s)

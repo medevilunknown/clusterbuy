@@ -49,7 +49,7 @@ export default function AdminApp({ user, onLogout, roleSwitcher }) {
   const [sel, setSel] = useState(null)
   const go = (v) => { setSel(null); setView(v) }
   return (
-    <div className="flex h-screen bg-[#E6EDF3]/40">
+    <div data-testid="admin-dashboard" className="flex h-screen bg-[#E6EDF3]/40">
       <Sidebar items={NAV} active={view} onNav={go} dark footer="System Admin · ClusterBuy Ops" />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar title="Admin control center" subtitle="What requires intervention across the network?" user={user} onLogout={onLogout} roleSwitcher={roleSwitcher} onNavigate={go} />
